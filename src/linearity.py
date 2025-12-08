@@ -8,7 +8,7 @@ import transformers
 import numpy as np
 from loguru import logger
 from tqdm import tqdm
-from utils import set_seed, seed_from_name
+from utils import set_seed, seed_from_name, _get_layers_container
 
 # TODO: how to handle the last layer?
 
@@ -179,31 +179,6 @@ def linearity() -> None:
                 use_fast=True,
                 dtype=dtype,
             )
-
-            def _get_layers_container(hf_model):
-                """used to get the layers container of the model
-                Args:
-                    hf_model (transformers.PreTrainedModel): the model to get the layers container
-                Returns:
-                    layers (list): the layers container of the model
-                """
-                # Common containers across HF architectures
-                candidates = [
-                    (hf_model, "gpt_neox", "layers"),
-                    (hf_model, "model", "layers"),
-                    (hf_model, "transformer", "layers"),
-                    (hf_model, "transformer", "h"),
-                ]
-                for root_obj, root_attr, layers_attr in candidates:
-                    root = getattr(root_obj, root_attr, None)
-                    if root is None:
-                        continue
-                    layers = getattr(root, layers_attr, None)
-                    if layers is not None:
-                        return layers
-                raise AttributeError(
-                    "Unable to locate transformer layers container on model"
-                )
 
             for layer_idx in tqdm(range(max_layers), desc="Measuring linearity"):
                 concept_vector = concept_vectors[layer_idx, :]

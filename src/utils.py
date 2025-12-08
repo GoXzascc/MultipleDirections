@@ -31,3 +31,29 @@ def seed_from_name(name: str) -> int:
     """
     h = hashlib.md5(name.encode()).hexdigest()
     return int(h, 16) % (2**31)
+
+
+def _get_layers_container(hf_model):
+    """used to get the layers container of the model
+    Args:
+        hf_model (transformers.PreTrainedModel): the model to get the layers container
+    Returns:
+        layers (list): the layers container of the model
+    """
+    # Common containers across HF architectures
+    candidates = [
+        (hf_model, "gpt_neox", "layers"),
+        (hf_model, "model", "layers"),
+        (hf_model, "transformer", "layers"),
+        (hf_model, "transformer", "h"),
+    ]
+    for root_obj, root_attr, layers_attr in candidates:
+        root = getattr(root_obj, root_attr, None)
+        if root is None:
+            continue
+        layers = getattr(root, layers_attr, None)
+        if layers is not None:
+            return layers
+    raise AttributeError(
+        "Unable to locate transformer layers container on model"
+    )
