@@ -14,7 +14,7 @@ from utils import set_seed, seed_from_name, _get_layers_container
 
 MODEL_LAYERS = {
     "google/gemma-3-270m-it": 18,
-    "google/gemma-3-4b-it": 34,  # TODO: replace with Gemma2, and add Mistral3
+    "google/gemma-3-4b-it": 34,  # TODO: multi model
     "google/gemma-3-12b-it": 48,
     "Qwen/Qwen3-1.7B": 28,
     "Qwen/Qwen3-8b": 36,
@@ -22,15 +22,18 @@ MODEL_LAYERS = {
     "EleutherAI/pythia-70m": 6,
     "EleutherAI/pythia-410m": 24,
     "EleutherAI/pythia-160m": 12,
+    "mistralai/Ministral-3-3B-Instruct-2512": 26,
+    "mistralai/Mistral-3-8B-Instruct-2512": 34,
+    "mistralai/Mistral-3-14B-Instruct-2512": 40,
 }
 
 CONCEPT_CATEGORIES = {
     "safety": ["assets/harmbench", "instruction"],
-    "language_en_fr": ["assets/language_translation", "text"],
-    "random": ["assets/harmbench", "instruction"],
-    "random1": ["assets/harmbench", "instruction"],
-    "random2": ["assets/language_translation", "text"],
-    "random3": ["assets/language_translation", "text"],
+    # "language_en_fr": ["assets/language_translation", "text"],
+    # "random": ["assets/harmbench", "instruction"],
+    # "random1": ["assets/harmbench", "instruction"],
+    # "random2": ["assets/language_translation", "text"],
+    # "random3": ["assets/language_translation", "text"],
 }
 
 
@@ -42,7 +45,7 @@ def config() -> argparse.Namespace:
     parser.add_argument(
         "--model",
         type=str,
-        default="Qwen/Qwen3-1.7B",
+        default="EleutherAI/pythia-160m",
         choices=MODEL_LAYERS.keys(),
         help="the model to calculate the linearity",
     )
@@ -56,7 +59,7 @@ def config() -> argparse.Namespace:
     parser.add_argument(
         "--dtype",
         type=str,
-        default="float32",
+        default="bfloat16",
         choices=["bfloat16", "float16", "float32"],
         help="the dtype to use",
     )
@@ -81,13 +84,13 @@ def config() -> argparse.Namespace:
     parser.add_argument(
         "--concept_vector_alpha",
         type=float,
-        default=1,
+        default=100,
         help="the beginning alpha to use to calculate the concept vector",
     )
     parser.add_argument(
         "--alpha_factor",
         type=int,
-        default=1000,
+        default=100,
         help="the factor to multiply the alpha by",
     )
     parser.add_argument(
@@ -99,7 +102,7 @@ def config() -> argparse.Namespace:
         "--linearity_metric",
         type=str,
         nargs="+",
-        default=["lss", "lsr"],
+        default=["norm"],
         choices=["lss", "lsr", "norm"],
         help="the metrics to use to calculate the linearity",
     )
@@ -193,6 +196,9 @@ def linearity() -> None:
                 ).to(args.device)
                 input_ids = input_ids.input_ids
                 output = model(input_ids, output_hidden_states=True)
+                probs_wo_steering = torch.nn.functional.softmax(output.logits, dim=-1)
+                idx_base_top1, _ = probs_wo_steering.max(dim=-1)
+                logits_entropy_wo_steering = -torch.sum(probs_wo_steering * torch.log(probs_wo_steering + 1e-10), dim=-1)
                 last_layer_hidden_states = output.hidden_states[-1]
                 dim_middle_states = last_layer_hidden_states.shape[-1]
                 seq_len = last_layer_hidden_states.shape[1]
@@ -216,16 +222,7 @@ def linearity() -> None:
                         dtype=torch.float32,
                     )
                 elif metric == "norm":
-                    mean_norm = torch.zeros(
-                        args.alpha_factor,
-                        device=torch.device(args.device),
-                        dtype=torch.float32,
-                    )
-                    std_norm = torch.zeros(
-                        args.alpha_factor,
-                        device=torch.device(args.device),
-                        dtype=torch.float32,
-                    )
+                    norm_related = {"top1_probs": [], "entropy_diff_mean": [], "entropy_diff_std": [], "delta_p_flip_mean": [], "delta_p_flip_std": [], "delta_tail_mean": [], "delta_tail_std": [], "norm_diff_mean": [], "norm_diff_std": [], "unique_ratio_steered": [], "unique_ratio_wo_steering": []}
                 else:
                     raise ValueError(f"Invalid metric: {metric}")
 
@@ -250,8 +247,8 @@ def linearity() -> None:
                     hook_handle = target_layer_module.register_forward_hook(
                         _forward_hook
                     )
-                    output = model(input_ids, output_hidden_states=True)
-                    steered_last_layer_hidden_states = output.hidden_states[-1]
+                    steered_output = model(input_ids, output_hidden_states=True)
+                    steered_last_layer_hidden_states = steered_output.hidden_states[-1]
                     hook_handle.remove()
                     if metric == "lss":
                         lss_middle_states = compute_line_shape_score_middle_states(
@@ -290,10 +287,50 @@ def linearity() -> None:
                             )
                         )
                     elif metric == "norm":
-                        norm_diff = torch.norm(steered_last_layer_hidden_states.reshape(-1, dim_middle_states) - last_layer_hidden_states.reshape(-1, dim_middle_states), p=2, dim=-1) / torch.norm(last_layer_hidden_states.reshape(-1, dim_middle_states), p=2, dim=-1)
-                        norm_diff = norm_diff.detach().cpu().numpy()
-                        mean_norm[i] = float(np.mean(norm_diff))
-                        std_norm[i] = float(np.std(norm_diff))
+                        if args.remove_concept_vector:
+                            
+                            # entropy difference
+                            probs_steered = torch.nn.functional.softmax(steered_output.logits, dim=-1)
+                            logits_entropy_steered = -torch.sum(probs_steered * torch.log(probs_steered + 1e-10), dim=-1)
+                            entropy_diff = ((logits_entropy_steered - logits_entropy_wo_steering) / logits_entropy_wo_steering)
+                            
+                            # top1 delta p flip
+                            top1_probs_index_steered = probs_steered.argmax(dim=-1)
+                            top1_probs_index_wo_steering = probs_wo_steering.argmax(dim=-1)
+                            p_new_top1 = probs_steered.gather(
+                                -1, top1_probs_index_steered.unsqueeze(-1)
+                            ).squeeze(-1)
+                            p_orig_top1 = probs_wo_steering.gather(
+                                -1, top1_probs_index_wo_steering.unsqueeze(-1)
+                            ).squeeze(-1)
+                            tau = 0.8
+                            keep = idx_base_top1 < tau          
+                            delta_p_flip = p_new_top1 - p_orig_top1
+                            
+                            # unique ratio
+                            steered_idx_flat = top1_probs_index_steered.reshape(-1)
+                            if i == 0:
+                                wo_steering_idx_flat = top1_probs_index_wo_steering.reshape(-1)
+                                unique_wo_steering_idx = torch.unique(wo_steering_idx_flat)
+                                total_num = steered_idx_flat.shape[0]
+                                unique_num_wo_steering = unique_wo_steering_idx.shape[0]
+                                unique_ratio_wo_steering = unique_num_wo_steering / total_num
+                                norm_related["unique_ratio_steered"].append(unique_ratio_wo_steering)
+                                unique_token_str = tokenizer.decode(unique_wo_steering_idx)
+                                norm_related["top1_probs"].append(p_orig_top1.detach().to(torch.float32).cpu().numpy().reshape(-1))
+                            else:
+                                unique_steered_idx = torch.unique(steered_idx_flat)
+                                unique_token_str = tokenizer.decode(unique_steered_idx)
+                                unique_num_steered = unique_steered_idx.shape[0]
+                                total_num = steered_idx_flat.shape[0]
+                                unique_ratio_steered = unique_num_steered / total_num
+                                norm_related["unique_ratio_steered"].append(unique_ratio_steered)
+                                norm_related["top1_probs"].append(p_new_top1.detach().to(torch.float32).cpu().numpy().reshape(-1))
+                            
+                            norm_related["delta_p_flip_mean"].append(float(np.mean(delta_p_flip[keep].detach().to(torch.float32).cpu().numpy())))
+                            norm_related["delta_p_flip_std"].append(float(np.std(delta_p_flip[keep].detach().to(torch.float32).cpu().numpy())))
+                            norm_related["entropy_diff_mean"].append(float(np.mean(entropy_diff[keep].detach().to(torch.float32).cpu().numpy())))
+                            norm_related["entropy_diff_std"].append(float(np.std(entropy_diff[keep].detach().to(torch.float32).cpu().numpy())))
                     else:
                         raise ValueError(f"Invalid metric: {metric}")
                 if metric == "lss":
@@ -336,24 +373,10 @@ def linearity() -> None:
                             f"assets/linearity/{model_name}/lsr_{concept_category_name}_layer{layer_idx}_wo_remove.pt",
                         )
                 elif metric == "norm":
-                    if args.remove_concept_vector:
-                        torch.save(
-                            mean_norm,
-                            f"assets/linearity/{model_name}/mean_norm_{concept_category_name}_layer{layer_idx}_w_remove.pt",
-                        )
-                        torch.save(
-                            std_norm,
-                            f"assets/linearity/{model_name}/std_norm_{concept_category_name}_layer{layer_idx}_w_remove.pt",
-                        )
-                    else:
-                        torch.save(
-                            mean_norm,
-                            f"assets/linearity/{model_name}/mean_norm_{concept_category_name}_layer{layer_idx}_wo_remove.pt",
-                        )
-                        torch.save(
-                            std_norm,
-                            f"assets/linearity/{model_name}/std_norm_{concept_category_name}_layer{layer_idx}_wo_remove.pt",
-                        )
+                    torch.save(
+                        norm_related,
+                        f"assets/linearity/{model_name}/norm_related_{concept_category_name}_layer{layer_idx}.pt",
+                    )
                 else:
                     raise ValueError(f"Invalid metric: {metric}")
 

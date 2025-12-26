@@ -25,12 +25,12 @@ MODEL_LAYERS = {
 }
 
 CONCEPT_CATEGORIES = {
-    "safety": ["assets/harmbench", "instruction"],
-    # "language_en_fr": ["assets/language_translation", "text"],
+    # "safety": ["assets/harmbench", "instruction"],
+    "language_en_fr": ["assets/language_translation", "text"],
     # "random": ["assets/harmbench", "instruction"],
     # "random1": ["assets/harmbench", "instruction"],
-    # "random2": ["assets/language_translation", "text"],
-    # "random3": ["assets/language_translation", "text"],
+    "random2": ["assets/language_translation", "text"],
+    "random3": ["assets/language_translation", "text"],
 }
 
 
@@ -42,7 +42,7 @@ def config() -> argparse.Namespace:
     parser.add_argument(
         "--model",
         type=str,
-        default="EleutherAI/pythia-70m",
+        default="EleutherAI/pythia-160m",
         choices=MODEL_LAYERS.keys(),
     )
     parser.add_argument(
@@ -54,9 +54,9 @@ def config() -> argparse.Namespace:
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--dtype", type=str, default="float32")
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--approx_dataset_size", type=int, default=30)
+    parser.add_argument("--approx_dataset_size", type=int, default=20)
     parser.add_argument("--alpha_factor", type=int, default=1000)
-    parser.add_argument("--alpha_min", type=float, default=1)
+    parser.add_argument("--alpha_min", type=float, default=0.01)
     return parser.parse_args()
 
 
@@ -226,20 +226,21 @@ def approx() -> None:
 
                 mse = F.mse_loss(delta_true, delta_predicted)
                 rel_err = (delta_true - delta_predicted).norm() / (delta_true.norm() + 1e-8)
-                logger.info(f"rel_err={rel_err:.6f}")
-                logger.info(
-                    f"[layer {layer_idx}] alpha={cur_approx_alpha:.4f} "
-                    f"cos_sim={cosine_sim:.6f} mse={mse.item():.6f} rel_err={rel_err:.6f}"
-                )
+                # logger.info(f"rel_err={rel_err:.6f}")
+                # logger.info(
+                #     f"[layer {layer_idx}] alpha={cur_approx_alpha:.4f} "
+                #     f"cos_sim={cosine_sim:.6f} mse={mse.item():.6f} rel_err={rel_err:.6f}"
+                # )
                 cosine_sims[layer_idx].append(cosine_sim.item())
                 mses[layer_idx].append(mse.item())
                 rel_errs[layer_idx].append(rel_err.item())
-        os.makedirs(f"assets/approx/", exist_ok=True)
+        os.makedirs(f"assets/approx/{model_name}", exist_ok=True)
         torch.save(
             cosine_sims,
-            f"assets/approx/cosine_sims_{model_name}_{concept_category_name}.pt",
+            f"assets/approx/{model_name}/cosine_sims_{concept_category_name}.pt",
         )
-        torch.save(mses, f"assets/approx/mses_{model_name}_{concept_category_name}.pt")
+        torch.save(mses, f"assets/approx/{model_name}/mses_{concept_category_name}.pt")
+        torch.save(rel_errs, f"assets/approx/{model_name}/rel_errs_{concept_category_name}.pt")
 
 
 if __name__ == "__main__":
