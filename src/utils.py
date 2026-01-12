@@ -10,20 +10,47 @@ from tqdm import tqdm
 from loguru import logger
 
 MODEL_LAYERS = {
-    # "Qwen/Qwen3-1.7B": 28,
+    "Qwen/Qwen3-1.7B": 28,
     # "Qwen/Qwen3-14B": 40,
     "EleutherAI/pythia-70m": 6,
     "EleutherAI/pythia-160m": 12,
-    # "google/gemma-2-2b": 26,
+    "google/gemma-2-2b": 26,
     # "google/gemma-2-9b": 42,
 }
 
 CONCEPT_CATEGORIES = {
-    "safety": ["dataset/harmbench", "instruction"],
-    "language_en_fr": ["dataset/language_translation", "text"],
-    "sycophantic": ["dataset/sycophantic", "instruction"],
-    "evil": ["dataset/evil", "instruction"],
-    "optimistic": ["dataset/optimistic", "instruction"],
+    "safety": {
+        "base_path": "dataset/harmbench",
+        "dataset_key": "instruction",
+        "loader_type": "separate_files",
+        "positive_file": "harmful_data.jsonl",
+        "negative_file": "harmless_data.jsonl",
+    },
+    "language_en_fr": {
+        "base_path": "dataset/language_translation",
+        "dataset_key": "text",
+        "loader_type": "separate_files",
+        "positive_file": "en.jsonl",
+        "negative_file": "fr.jsonl",
+    },
+    "sycophantic": {
+        "base_path": "dataset/sycophantic.json",
+        "dataset_key": "instruction",
+        "loader_type": "single_file_with_pos_neg",
+        "instruction_key": "instruction",
+    },
+    "evil": {
+        "base_path": "dataset/evil.json",
+        "dataset_key": "instruction",
+        "loader_type": "single_file_with_pos_neg",
+        "instruction_key": "instruction",
+    },
+    "optimistic": {
+        "base_path": "dataset/optimistic.json",
+        "dataset_key": "instruction",
+        "loader_type": "single_file_with_pos_neg",
+        "instruction_key": "instruction",
+    },
 }
 
 
@@ -81,6 +108,97 @@ def _get_layers_container(hf_model):
     raise AttributeError("Unable to locate transformer layers container on model")
 
 
+def _load_separate_files_dataset(
+    base_path: str, positive_file: str, negative_file: str
+) -> tuple[datasets.Dataset, datasets.Dataset]:
+    """Load datasets from separate positive and negative files.
+    
+    Args:
+        base_path: Base directory path containing the files
+        positive_file: Name of the positive examples file
+        negative_file: Name of the negative examples file
+    
+    Returns:
+        Tuple of (positive_dataset, negative_dataset)
+    """
+    positive_dataset_path = os.path.join(base_path, positive_file)
+    negative_dataset_path = os.path.join(base_path, negative_file)
+    
+    positive_dataset = datasets.load_dataset(
+        "json", data_files=positive_dataset_path, split="train"
+    )
+    negative_dataset = datasets.load_dataset(
+        "json", data_files=negative_dataset_path, split="train"
+    )
+    
+    return positive_dataset, negative_dataset
+
+
+def _load_single_file_with_pos_neg(
+    file_path: str, instruction_key: str, dataset_key: str
+) -> tuple[datasets.Dataset, datasets.Dataset]:
+    """Load datasets from a single file containing positive and negative examples.
+    
+    Args:
+        file_path: Path to the JSON file
+        instruction_key: Key in the JSON file containing the instruction array
+        dataset_key: Key name to use when creating the dataset
+    
+    Returns:
+        Tuple of (positive_dataset, negative_dataset)
+    """
+    dataset_file = datasets.load_dataset(
+        "json", data_files=file_path, split="train"
+    )
+    
+    # Extract positive and negative instructions
+    instructions = dataset_file[0][instruction_key]
+    positive_prompts = [item["pos"] for item in instructions]
+    negative_prompts = [item["neg"] for item in instructions]
+    
+    # Create datasets from the prompts
+    positive_dataset = datasets.Dataset.from_dict({dataset_key: positive_prompts})
+    negative_dataset = datasets.Dataset.from_dict({dataset_key: negative_prompts})
+    
+    return positive_dataset, negative_dataset
+
+
+def load_concept_datasets(
+    concept_category_name: str, concept_category_config: dict
+) -> tuple[datasets.Dataset, datasets.Dataset, str]:
+    """Load positive and negative datasets for a concept category.
+    
+    Args:
+        concept_category_name: Name of the concept category
+        concept_category_config: Configuration dictionary for the concept category
+    
+    Returns:
+        Tuple of (positive_dataset, negative_dataset, dataset_key)
+    """
+    loader_type = concept_category_config["loader_type"]
+    dataset_key = concept_category_config["dataset_key"]
+    
+    if loader_type == "separate_files":
+        base_path = concept_category_config["base_path"]
+        positive_file = concept_category_config["positive_file"]
+        negative_file = concept_category_config["negative_file"]
+        positive_dataset, negative_dataset = _load_separate_files_dataset(
+            base_path, positive_file, negative_file
+        )
+    elif loader_type == "single_file_with_pos_neg":
+        file_path = concept_category_config["base_path"]
+        instruction_key = concept_category_config["instruction_key"]
+        positive_dataset, negative_dataset = _load_single_file_with_pos_neg(
+            file_path, instruction_key, dataset_key
+        )
+    else:
+        raise ValueError(
+            f"Unknown loader_type '{loader_type}' for concept category '{concept_category_name}'"
+        )
+    
+    return positive_dataset, negative_dataset, dataset_key
+
+
 def concept_vector(
     max_dataset_size: int = 300
 ):
@@ -103,65 +221,50 @@ def concept_vector(
         )
         for (
             concept_category_name,
-            concept_category_metadata,
+            concept_category_config,
         ) in CONCEPT_CATEGORIES.items():
             concept_vector = obtain_concept_vector(
                 model,
                 max_layers,
                 concept_category_name,
-                concept_category_metadata,
+                concept_category_config,
                 max_dataset_size,
                 model_name,
             )
-            return concept_vector
-
 
 def obtain_concept_vector(
     model: transformer_lens.HookedTransformer,
     max_layers: int,
     concept_category_name: str,
-    concept_category_metadata: list,
+    concept_category_config: dict,
     max_dataset_size: int = 300,
     model_name: str = "Qwen/Qwen3-1.7B",
     methods: str = "difference-in-means",
 ) -> torch.Tensor:
-    dataset_path = concept_category_metadata[0]
-    dataset_key = concept_category_metadata[1]
-    if concept_category_name == "safety":
-        positive_dataset_path = os.path.join(dataset_path, "harmful_data.jsonl")
-        negative_dataset_path = os.path.join(dataset_path, "harmless_data.jsonl")
-        positive_dataset = datasets.load_dataset(
-            "json", data_files=positive_dataset_path, split="train"
-        )
-        negative_dataset = datasets.load_dataset(
-            "json", data_files=negative_dataset_path, split="train"
-        )
-    elif concept_category_name == "language_en_fr":
-        positive_dataset_path = os.path.join(dataset_path, "en.jsonl")
-        negative_dataset_path = os.path.join(dataset_path, "fr.jsonl")
-        positive_dataset = datasets.load_dataset(
-            "json", data_files=positive_dataset_path, split="train"
-        )
-        negative_dataset = datasets.load_dataset(
-            "json", data_files=negative_dataset_path, split="train"
-        )
-    elif concept_category_name in ["evil", "sycophantic", "optimistic"]:
-        dataset_file = datasets.load_dataset(
-            "json", data_files=dataset_path, split="train"
-        )
-        # Extract positive and negative instructions
-        instructions = dataset_file[0]["instruction"]
-        positive_prompts = [item["pos"] for item in instructions]
-        negative_prompts = [item["neg"] for item in instructions]
-
-        # Create datasets from the prompts
-        positive_dataset = datasets.Dataset.from_dict({dataset_key: positive_prompts})
-        negative_dataset = datasets.Dataset.from_dict({dataset_key: negative_prompts})
-    else:
-        raise ValueError(f"Invalid concept category: {concept_category_name}")
+    """Obtain concept vector for a given concept category.
+    
+    Args:
+        model: The model to obtain the concept vector from
+        max_layers: Maximum number of layers to process
+        concept_category_name: Name of the concept category
+        concept_category_config: Configuration dictionary for the concept category
+        max_dataset_size: Maximum size of the dataset to use
+        model_name: Name of the model
+        methods: Method to use for obtaining concept vectors
+    
+    Returns:
+        Tuple of (concept_vector, positive_dataset, dataset_key)
+    """
+    # Load datasets using the unified loading system
+    positive_dataset, negative_dataset, dataset_key = load_concept_datasets(
+        concept_category_name, concept_category_config
+    )
+    
+    # Set up save path
     os.makedirs(f"assets/concept_vectors/{model_name}", exist_ok=True)
     save_path = f"assets/concept_vectors/{model_name}/{concept_category_name}.pt"
 
+    # Get concept vectors
     concept_vector = get_concept_vectors(
         model=model,
         positive_dataset=positive_dataset,
