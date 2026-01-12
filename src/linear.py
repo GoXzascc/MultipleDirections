@@ -16,7 +16,7 @@ from tqdm import tqdm
 
 def linear():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", type=str, default="EleutherAI/pythia-70m")
+    parser.add_argument("--model", type=str, default="Qwen/Qwen3-1.7B")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--test_size", type=int, default=16)
     parser.add_argument("--alpha_min", type=float, default=1e-3)

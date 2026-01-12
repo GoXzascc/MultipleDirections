@@ -4,8 +4,8 @@
 # The linear.py script automatically processes all concepts defined in CONCEPT_CATEGORIES
 
 models=(
-  "google/gemma-2-2b"
-  "Qwen/Qwen3-1.7B"
+#   "google/gemma-2-2b"
+#   "Qwen/Qwen3-1.7B"
 #   "EleutherAI/pythia-70m"
   "EleutherAI/pythia-160m"
 )
