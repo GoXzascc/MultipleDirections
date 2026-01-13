@@ -232,7 +232,7 @@ def plot_all_layers_all_concepts(model_name: str, concept_files_concept: list[st
         
         # Plot all concepts for this layer (both concept and random vectors)
         for concept_name in sorted(all_concepts):
-            # Plot concept vector results
+            # Plot concept vector results (solid, thick, colored)
             if concept_name in concept_data_concept and layer_num in concept_data_concept[concept_name]:
                 results = concept_data_concept[concept_name]
                 alpha = _to_np(results[layer_num]["alpha"])
@@ -243,10 +243,10 @@ def plot_all_layers_all_concepts(model_name: str, concept_files_concept: list[st
                     ax.plot(alpha[mask], kappa[mask], 
                            color=concept_colors[concept_name],
                            label=f"{concept_name.replace('_', ' ').title()} (Concept)",
-                           linewidth=2.5, marker='o', markersize=3,
-                           markevery=max(1, len(alpha[mask]) // 30), alpha=0.8, linestyle='-')
+                           linewidth=3.0, marker='o', markersize=5,
+                           markevery=max(1, len(alpha[mask]) // 20), alpha=0.95, linestyle='-')
             
-            # Plot random vector results
+            # Plot random vector results (dashed, thin, gray-ish)
             if concept_name in concept_data_random and layer_num in concept_data_random[concept_name]:
                 results = concept_data_random[concept_name]
                 alpha = _to_np(results[layer_num]["alpha"])
@@ -255,10 +255,10 @@ def plot_all_layers_all_concepts(model_name: str, concept_files_concept: list[st
                 
                 if np.any(mask):
                     ax.plot(alpha[mask], kappa[mask], 
-                           color=concept_colors[concept_name],
+                           color='#888888',  # Use gray for all random vectors
                            label=f"{concept_name.replace('_', ' ').title()} (Random)",
-                           linewidth=2.5, marker='s', markersize=3,
-                           markevery=max(1, len(alpha[mask]) // 30), alpha=0.6, linestyle='--')
+                           linewidth=1.5, marker='x', markersize=4,
+                           markevery=max(1, len(alpha[mask]) // 20), alpha=0.7, linestyle=':')
         
         ax.set_xscale("log")
         ax.set_yscale("log")
@@ -273,11 +273,6 @@ def plot_all_layers_all_concepts(model_name: str, concept_files_concept: list[st
             spine.set_linewidth(1.2)
             spine.set_color('#333333')
         
-        # Add legend for first subplot only
-        if layer_idx == 0:
-            ax.legend(loc='upper left', frameon=True, fancybox=True, shadow=False,
-                     framealpha=0.95, edgecolor='black', fontsize=9, ncol=1)
-    
     # Hide unused subplots
     for idx in range(num_layers, len(axes)):
         axes[idx].axis('off')
@@ -288,7 +283,14 @@ def plot_all_layers_all_concepts(model_name: str, concept_files_concept: list[st
                  fontweight='bold', fontsize=16, y=0.995)
     
     plt.tight_layout()
-    plt.subplots_adjust(top=0.95)  # Make room for suptitle
+    plt.subplots_adjust(top=0.92, bottom=0.15)  # Make room for suptitle and legend
+    
+    # Collect legend handles and labels from the first subplot (avoiding duplicates)
+    handles, labels = axes[0].get_legend_handles_labels()
+    # Place legend at the bottom of the figure, outside plot area
+    fig.legend(handles, labels, loc='lower center', ncol=min(len(handles), 5),
+               frameon=True, fancybox=True, shadow=False, framealpha=0.95,
+               edgecolor='black', fontsize=9, bbox_to_anchor=(0.5, 0.01))
     
     if outpath:
         plt.savefig(outpath, dpi=300, bbox_inches='tight', format='pdf')

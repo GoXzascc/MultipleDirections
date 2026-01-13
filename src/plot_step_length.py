@@ -228,96 +228,246 @@ def plot_all_layers_all_concepts(
     
     use_new_format = sample_results is not None and 'total_norm_A' in sample_results
     
+    # Line styles for norm types (solid, dashed, dotted)
+    norm_type_linestyles = {
+        'total': '-',
+        'parallel': '--', 
+        'ortho': ':',
+    }
+    
     if use_new_format:
-        all_norm_types = norm_types_A + norm_types_B
-        num_cols = 6
+        # New layout: A rows on top, B rows on bottom
+        # Max columns per row (e.g., 6), wrap to multiple rows if needed
+        max_cols = 6
+        num_cols = min(num_layers, max_cols)
+        rows_per_group = (num_layers + max_cols - 1) // max_cols  # Ceiling division
+        num_rows = rows_per_group * 2  # 2 groups: A and B
+        
+        fig, axes = plt.subplots(num_rows, num_cols, figsize=(num_cols * 4, num_rows * 3.5), dpi=300)
+        if num_rows == 1:
+            axes = axes.reshape(1, -1)
+        if num_cols == 1:
+            axes = axes.reshape(-1, 1)
+        
+        # Helper to get (row, col) for a given layer index within a group
+        def get_ax_position(layer_idx, group_offset):
+            row_in_group = layer_idx // max_cols
+            col = layer_idx % max_cols
+            return group_offset + row_in_group, col
+        
+        row_configs = [
+            (0, norm_types_A, "A: h - αv"),  # A group starts at row 0
+            (rows_per_group, norm_types_B, "B: Δh - αv"),  # B group starts after A rows
+        ]
+        
+        for group_offset, norm_types, row_label in row_configs:
+            for layer_idx, layer_num in enumerate(all_layers):
+                row_idx, col_idx = get_ax_position(layer_idx, group_offset)
+                ax = axes[row_idx, col_idx]
+                
+                # Plot all concepts and all norm types for this layer
+                for concept_idx, concept_name in enumerate(sorted(all_concepts)):
+                    concept_color = concept_colors[concept_name]
+                    
+                    # Plot concept vector results (solid lines, colored by concept)
+                    if concept_name in concept_data_concept and layer_num in concept_data_concept[concept_name]:
+                        results = concept_data_concept[concept_name][layer_num]
+                        alpha = _to_np(results["alpha"])
+                        
+                        for norm_type in norm_types:
+                            if norm_type in results:
+                                norm_val = _to_np(results[norm_type])
+                                mask = np.isfinite(alpha) & np.isfinite(norm_val)
+                                
+                                # Determine norm type for linestyle
+                                if 'total' in norm_type:
+                                    norm_key = 'total'
+                                elif 'parallel' in norm_type:
+                                    norm_key = 'parallel'
+                                else:
+                                    norm_key = 'ortho'
+                                
+                                if np.any(mask):
+                                    # Only add label once (first subplot)
+                                    show_label = (group_offset == 0 and layer_idx == 0)
+                                    label = f"{concept_name} {norm_key}" if show_label else ""
+                                    ax.plot(alpha[mask], norm_val[mask], 
+                                           color=concept_color,
+                                           label=label,
+                                           linewidth=1.5, 
+                                           linestyle=norm_type_linestyles[norm_key],
+                                           alpha=0.85)
+                    
+                    # Plot random vector results (gray, thinner)
+                    if concept_name in concept_data_random and layer_num in concept_data_random[concept_name]:
+                        results = concept_data_random[concept_name][layer_num]
+                        alpha = _to_np(results["alpha"])
+                        
+                        for norm_type in norm_types:
+                            if norm_type in results:
+                                norm_val = _to_np(results[norm_type])
+                                mask = np.isfinite(alpha) & np.isfinite(norm_val)
+                                
+                                if 'total' in norm_type:
+                                    norm_key = 'total'
+                                elif 'parallel' in norm_type:
+                                    norm_key = 'parallel'
+                                else:
+                                    norm_key = 'ortho'
+                                
+                                if np.any(mask):
+                                    ax.plot(alpha[mask], norm_val[mask], 
+                                           color='#AAAAAA',
+                                           linewidth=0.8, 
+                                           linestyle=norm_type_linestyles[norm_key],
+                                           alpha=0.5)
+                
+                ax.set_xscale("log")
+                ax.set_yscale("log")
+                ax.set_xlabel("Alpha", fontweight='bold', fontsize=9)
+                ax.set_ylabel("Norm", fontweight='bold', fontsize=9)
+                ax.set_title(f"Layer {layer_num} | {row_label}", fontweight='bold', pad=6, fontsize=10)
+                ax.grid(True, alpha=0.3, linestyle='--', linewidth=0.6, axis='both')
+                ax.set_axisbelow(True)
+                
+                # Style spines
+                for spine in ax.spines.values():
+                    spine.set_linewidth(0.8)
+                    spine.set_color('#333333')
+        
+        # Hide unused subplots (when layers don't fill the grid)
+        for group_offset in [0, rows_per_group]:
+            for layer_idx in range(num_layers, rows_per_group * max_cols):
+                row_idx, col_idx = get_ax_position(layer_idx, group_offset)
+                if row_idx < num_rows and col_idx < num_cols:
+                    axes[row_idx, col_idx].axis('off')
     else:
-        all_norm_types = norm_types_old
-        num_cols = 3
-    
-    fig, axes = plt.subplots(num_layers, num_cols, figsize=(num_cols * 4, num_layers * 3.5), dpi=300)
-    if num_layers == 1:
-        axes = axes.reshape(1, -1)
-    
-    # Plot each layer
-    for layer_idx, layer_num in enumerate(all_layers):
-        for col_idx, norm_type in enumerate(all_norm_types):
-            ax = axes[layer_idx, col_idx]
+        # Old format: rows = layers, columns = norm types (total, parallel, ortho)
+        # Apply same max_cols logic
+        max_cols = 6
+        num_cols = min(num_layers, max_cols)
+        num_rows = (num_layers + max_cols - 1) // max_cols
+        
+        fig, axes = plt.subplots(num_rows, num_cols, figsize=(num_cols * 4, num_rows * 3.5), dpi=300)
+        if num_rows == 1:
+            axes = axes.reshape(1, -1)
+        if num_cols == 1:
+            axes = axes.reshape(-1, 1)
+        
+        # Plot each layer (all norm types in same subplot)
+        for layer_idx, layer_num in enumerate(all_layers):
+            row_idx = layer_idx // max_cols
+            col_idx = layer_idx % max_cols
+            ax = axes[row_idx, col_idx]
             
             # Plot all concepts for this layer
             for concept_name in sorted(all_concepts):
-                # Plot concept vector results
+                concept_color = concept_colors[concept_name]
+                
+                # Plot concept vector results (colored by concept, linestyle by norm type)
                 if concept_name in concept_data_concept and layer_num in concept_data_concept[concept_name]:
                     results = concept_data_concept[concept_name][layer_num]
                     alpha = _to_np(results["alpha"])
-                    if norm_type in results:
-                        norm_val = _to_np(results[norm_type])
-                        mask = np.isfinite(alpha) & np.isfinite(norm_val)
-                        
-                        if np.any(mask):
-                            ax.plot(alpha[mask], norm_val[mask], 
-                                   color=concept_colors[concept_name],
-                                   label=f"{concept_name} (Concept)" if layer_idx == 0 and col_idx == 0 else "",
-                                   linewidth=2.0, marker='o', markersize=2,
-                                   markevery=max(1, len(alpha[mask]) // 20), alpha=0.8, linestyle='-')
+                    
+                    for norm_type in norm_types_old:
+                        if norm_type in results:
+                            norm_val = _to_np(results[norm_type])
+                            mask = np.isfinite(alpha) & np.isfinite(norm_val)
+                            
+                            if 'total' in norm_type:
+                                norm_key = 'total'
+                            elif 'parallel' in norm_type:
+                                norm_key = 'parallel'
+                            else:
+                                norm_key = 'ortho'
+                            
+                            if np.any(mask):
+                                show_label = (layer_idx == 0)
+                                label = f"{concept_name} {norm_key}" if show_label else ""
+                                ax.plot(alpha[mask], norm_val[mask], 
+                                       color=concept_color,
+                                       label=label,
+                                       linewidth=1.5, 
+                                       linestyle=norm_type_linestyles[norm_key],
+                                       alpha=0.85)
                 
-                # Plot random vector results
+                # Plot random vector results (gray, thinner)
                 if concept_name in concept_data_random and layer_num in concept_data_random[concept_name]:
                     results = concept_data_random[concept_name][layer_num]
                     alpha = _to_np(results["alpha"])
-                    if norm_type in results:
-                        norm_val = _to_np(results[norm_type])
-                        mask = np.isfinite(alpha) & np.isfinite(norm_val)
-                        
-                        if np.any(mask):
-                            ax.plot(alpha[mask], norm_val[mask], 
-                                   color=concept_colors[concept_name],
-                                   label=f"{concept_name} (Random)" if layer_idx == 0 and col_idx == 0 else "",
-                                   linewidth=2.0, marker='s', markersize=2,
-                                   markevery=max(1, len(alpha[mask]) // 20), alpha=0.5, linestyle='--')
+                    
+                    for norm_type in norm_types_old:
+                        if norm_type in results:
+                            norm_val = _to_np(results[norm_type])
+                            mask = np.isfinite(alpha) & np.isfinite(norm_val)
+                            
+                            if 'total' in norm_type:
+                                norm_key = 'total'
+                            elif 'parallel' in norm_type:
+                                norm_key = 'parallel'
+                            else:
+                                norm_key = 'ortho'
+                            
+                            if np.any(mask):
+                                ax.plot(alpha[mask], norm_val[mask], 
+                                       color='#AAAAAA',
+                                       linewidth=0.8, 
+                                       linestyle=norm_type_linestyles[norm_key],
+                                       alpha=0.5)
             
             ax.set_xscale("log")
             ax.set_yscale("log")
-            ax.set_xlabel("Alpha", fontweight='bold', fontsize=10)
-            ax.set_ylabel(norm_labels[norm_type], fontweight='bold', fontsize=10)
-            
-            # Title based on norm type
-            if 'total' in norm_type:
-                title_suffix = "Total"
-            elif 'parallel' in norm_type:
-                title_suffix = "Parallel"
-            else:
-                title_suffix = "Ortho"
-            
-            if use_new_format:
-                if '_A' in norm_type:
-                    ax.set_title(f"L{layer_num} | {title_suffix} (A: h-αv)", fontweight='bold', pad=8, fontsize=10)
-                else:
-                    ax.set_title(f"L{layer_num} | {title_suffix} (B: Δh-αv)", fontweight='bold', pad=8, fontsize=10)
-            else:
-                ax.set_title(f"Layer {layer_num} | {title_suffix} Norm", fontweight='bold', pad=8, fontsize=11)
-            
-            ax.grid(True, alpha=0.3, linestyle='--', linewidth=0.8, axis='both')
+            ax.set_xlabel("Alpha", fontweight='bold', fontsize=9)
+            ax.set_ylabel("Norm", fontweight='bold', fontsize=9)
+            ax.set_title(f"Layer {layer_num}", fontweight='bold', pad=6, fontsize=10)
+            ax.grid(True, alpha=0.3, linestyle='--', linewidth=0.6, axis='both')
             ax.set_axisbelow(True)
             
             # Style spines
             for spine in ax.spines.values():
-                spine.set_linewidth(1.0)
+                spine.set_linewidth(0.8)
                 spine.set_color('#333333')
-    
-    # Add legend at the bottom
-    handles, labels = axes[0, 0].get_legend_handles_labels()
-    if handles:
-        fig.legend(handles, labels, loc='upper center', bbox_to_anchor=(0.5, 0.02),
-                  ncol=min(5, len(handles)), frameon=True, fancybox=True, 
-                  shadow=False, framealpha=0.95, edgecolor='black', fontsize=10)
+        
+        # Hide unused subplots
+        for layer_idx in range(num_layers, num_rows * max_cols):
+            row_idx = layer_idx // max_cols
+            col_idx = layer_idx % max_cols
+            if row_idx < num_rows and col_idx < num_cols:
+                axes[row_idx, col_idx].axis('off')
     
     # Add overall title
-    fig.suptitle(f"{model_name} | Norm Decomposition vs Alpha (Concept vs Random Vectors)", 
-                 fontweight='bold', fontsize=16, y=0.995)
+    fig.suptitle(f"{model_name} | Norm Decomposition vs Alpha", 
+                 fontweight='bold', fontsize=14, y=0.995)
     
     plt.tight_layout()
-    plt.subplots_adjust(top=0.96, bottom=0.06)
+    plt.subplots_adjust(top=0.92, bottom=0.12)
+    
+    # Create custom legend with concept colors and linestyle explanations
+    from matplotlib.lines import Line2D
+    legend_handles = []
+    legend_labels = []
+    
+    # Add concept color entries
+    for concept_name in sorted(all_concepts):
+        legend_handles.append(Line2D([0], [0], color=concept_colors[concept_name], linewidth=2, linestyle='-'))
+        legend_labels.append(concept_name)
+    
+    # Add linestyle entries for norm types
+    legend_handles.append(Line2D([0], [0], color='gray', linewidth=1.5, linestyle='-'))
+    legend_labels.append('Total')
+    legend_handles.append(Line2D([0], [0], color='gray', linewidth=1.5, linestyle='--'))
+    legend_labels.append('Parallel')
+    legend_handles.append(Line2D([0], [0], color='gray', linewidth=1.5, linestyle=':'))
+    legend_labels.append('Ortho')
+    
+    # Add gray entry for random vectors
+    legend_handles.append(Line2D([0], [0], color='#AAAAAA', linewidth=0.8, linestyle='-', alpha=0.5))
+    legend_labels.append('Random (gray)')
+    
+    if legend_handles:
+        fig.legend(legend_handles, legend_labels, loc='lower center', bbox_to_anchor=(0.5, 0.01),
+                  ncol=min(len(legend_handles), 8), frameon=True, fancybox=True, 
+                  shadow=False, framealpha=0.95, edgecolor='black', fontsize=9)
     
     if outpath:
         plt.savefig(outpath, dpi=300, bbox_inches='tight', format='pdf')
@@ -412,7 +562,7 @@ def plot_norm_comparison(
         for layer_idx, layer_num in enumerate(all_layers):
             ax = axes[concept_idx, layer_idx]
             
-            # Plot concept vector norms
+            # Plot concept vector norms (solid, thick, colored)
             if concept_name in concept_data_concept and layer_num in concept_data_concept[concept_name]:
                 results = concept_data_concept[concept_name][layer_num]
                 alpha = _to_np(results["alpha"])
@@ -424,9 +574,10 @@ def plot_norm_comparison(
                         label = f"{norm_type.replace('_', ' ').title()} (C)" if concept_idx == 0 and layer_idx == 0 else ""
                         ax.plot(alpha[mask], norm_val[mask], 
                                color=color, label=label,
-                               linewidth=2.0, alpha=0.8, linestyle='-')
+                               linewidth=3.0, alpha=0.95, linestyle='-', marker='o', markersize=3,
+                               markevery=max(1, len(alpha[mask]) // 20))
             
-            # Plot random vector norms
+            # Plot random vector norms (dotted, thin, gray)
             if concept_name in concept_data_random and layer_num in concept_data_random[concept_name]:
                 results = concept_data_random[concept_name][layer_num]
                 alpha = _to_np(results["alpha"])
@@ -437,8 +588,9 @@ def plot_norm_comparison(
                     if np.any(mask):
                         label = f"{norm_type.replace('_', ' ').title()} (R)" if concept_idx == 0 and layer_idx == 0 else ""
                         ax.plot(alpha[mask], norm_val[mask], 
-                               color=color, label=label,
-                               linewidth=2.0, alpha=0.5, linestyle='--')
+                               color='#888888', label=label,  # Gray for random
+                               linewidth=1.5, alpha=0.7, linestyle=':', marker='x', markersize=2,
+                               markevery=max(1, len(alpha[mask]) // 20))
             
             ax.set_xscale("log")
             ax.set_yscale("log")
@@ -452,18 +604,18 @@ def plot_norm_comparison(
             ax.grid(True, alpha=0.3, linestyle='--', linewidth=0.8)
             ax.set_axisbelow(True)
     
-    # Add legend
-    handles, labels = axes[0, 0].get_legend_handles_labels()
-    if handles:
-        fig.legend(handles, labels, loc='upper center', bbox_to_anchor=(0.5, 0.02),
-                  ncol=6, frameon=True, fancybox=True, framealpha=0.95, 
-                  edgecolor='black', fontsize=9)
-    
     fig.suptitle(f"{model_name} | Norm Decomposition Comparison", 
                  fontweight='bold', fontsize=16, y=0.995)
     
     plt.tight_layout()
-    plt.subplots_adjust(top=0.95, bottom=0.06)
+    plt.subplots_adjust(top=0.93, bottom=0.12)
+    
+    # Add legend at bottom (outside plot area)
+    handles, labels = axes[0, 0].get_legend_handles_labels()
+    if handles:
+        fig.legend(handles, labels, loc='lower center', bbox_to_anchor=(0.5, 0.01),
+                  ncol=6, frameon=True, fancybox=True, framealpha=0.95, 
+                  edgecolor='black', fontsize=9)
     
     if outpath:
         plt.savefig(outpath, dpi=300, bbox_inches='tight', format='pdf')

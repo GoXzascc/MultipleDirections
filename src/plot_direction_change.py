@@ -195,7 +195,7 @@ def plot_all_layers_all_concepts(
             
             # Plot all concepts for this layer
             for concept_name in sorted(all_concepts):
-                # Plot concept vector results
+                # Plot concept vector results (solid, thick, colored)
                 if concept_name in concept_data_concept and layer_num in concept_data_concept[concept_name]:
                     results = concept_data_concept[concept_name][layer_num]
                     alpha = _to_np(results["alpha"])
@@ -207,10 +207,10 @@ def plot_all_layers_all_concepts(
                             ax.plot(alpha[mask], dir_val[mask], 
                                    color=concept_colors[concept_name],
                                    label=f"{concept_name} (Concept)" if layer_idx == 0 and col_idx == 0 else "",
-                                   linewidth=2.0, marker='o', markersize=2,
-                                   markevery=max(1, len(alpha[mask]) // 20), alpha=0.8, linestyle='-')
+                                   linewidth=3.0, marker='o', markersize=4,
+                                   markevery=max(1, len(alpha[mask]) // 20), alpha=0.95, linestyle='-')
                 
-                # Plot random vector results
+                # Plot random vector results (dotted, thin, gray)
                 if concept_name in concept_data_random and layer_num in concept_data_random[concept_name]:
                     results = concept_data_random[concept_name][layer_num]
                     alpha = _to_np(results["alpha"])
@@ -220,10 +220,10 @@ def plot_all_layers_all_concepts(
                         
                         if np.any(mask):
                             ax.plot(alpha[mask], dir_val[mask], 
-                                   color=concept_colors[concept_name],
+                                   color='#888888',  # Gray for random vectors
                                    label=f"{concept_name} (Random)" if layer_idx == 0 and col_idx == 0 else "",
-                                   linewidth=2.0, marker='s', markersize=2,
-                                   markevery=max(1, len(alpha[mask]) // 20), alpha=0.5, linestyle='--')
+                                   linewidth=1.5, marker='x', markersize=3,
+                                   markevery=max(1, len(alpha[mask]) // 20), alpha=0.7, linestyle=':')
             
             ax.set_xscale("log")
             ax.set_xlabel("Alpha", fontweight='bold', fontsize=10)
@@ -244,19 +244,205 @@ def plot_all_layers_all_concepts(
                 spine.set_linewidth(1.0)
                 spine.set_color('#333333')
     
-    # Add legend at the bottom
-    handles, labels = axes[0, 0].get_legend_handles_labels()
-    if handles:
-        fig.legend(handles, labels, loc='upper center', bbox_to_anchor=(0.5, 0.02),
-                  ncol=min(5, len(handles)), frameon=True, fancybox=True, 
-                  shadow=False, framealpha=0.95, edgecolor='black', fontsize=10)
-    
     # Add overall title
     fig.suptitle(f"{model_name} | Directional Change vs Alpha (Concept vs Random Vectors)", 
                  fontweight='bold', fontsize=16, y=0.995)
     
+    # Collect legend handles first to determine space needed
+    handles, labels = axes[0, 0].get_legend_handles_labels()
+    num_legend_rows = (len(handles) + 4) // 5 if handles else 0
+    legend_height = 0.03 + num_legend_rows * 0.02
+    
     plt.tight_layout()
-    plt.subplots_adjust(top=0.96, bottom=0.06)
+    plt.subplots_adjust(top=0.94, bottom=legend_height + 0.06)
+    
+    # Add legend at the bottom (outside plot area)
+    if handles:
+        fig.legend(handles, labels, loc='upper center', bbox_to_anchor=(0.5, legend_height),
+                  ncol=min(5, len(handles)), frameon=True, fancybox=True, 
+                  shadow=False, framealpha=0.95, edgecolor='black', fontsize=10)
+    
+    if outpath:
+        plt.savefig(outpath, dpi=300, bbox_inches='tight', format='pdf')
+    else:
+        plt.show()
+    plt.close()
+
+
+def plot_compact_grid(
+    model_name: str, 
+    concept_files_concept: list[str], 
+    concept_files_random: list[str], 
+    outpath: str | None,
+    cols_per_row: int = 6
+):
+    """
+    Plot directional change in a compact grid layout with multiple layers per row.
+    Each subplot shows both cos_delta_v and cos_delta_h0 in one panel.
+    
+    Args:
+        model_name: Name of the model
+        concept_files_concept: List of concept vector direction file paths
+        concept_files_random: List of random vector direction file paths
+        outpath: Output path for the plot
+        cols_per_row: Number of layers per row
+    """
+    # Load concept vector files
+    concept_data_concept = {}
+    for file_path in concept_files_concept:
+        obj = load_direction_pt(file_path)
+        concept_name = obj.get("concept_category", None)
+        if concept_name is None:
+            filename = os.path.basename(file_path)
+            if filename.startswith("directional_change_") and filename.endswith(".pt"):
+                name_part = filename[len("directional_change_"):-3]
+                for suffix in ["_concept", "_random"]:
+                    if name_part.endswith(suffix):
+                        name_part = name_part[:-len(suffix)]
+                concept_name = name_part
+            else:
+                concept_name = filename
+        concept_data_concept[concept_name] = obj["results"]
+    
+    # Load random vector files
+    concept_data_random = {}
+    for file_path in concept_files_random:
+        obj = load_direction_pt(file_path)
+        concept_name = obj.get("concept_category", None)
+        if concept_name is None:
+            filename = os.path.basename(file_path)
+            if filename.startswith("directional_change_") and filename.endswith(".pt"):
+                name_part = filename[len("directional_change_"):-3]
+                for suffix in ["_concept", "_random"]:
+                    if name_part.endswith(suffix):
+                        name_part = name_part[:-len(suffix)]
+                concept_name = name_part
+            else:
+                concept_name = filename
+        concept_data_random[concept_name] = obj["results"]
+    
+    all_concepts = set(concept_data_concept.keys()) | set(concept_data_random.keys())
+    if not all_concepts:
+        raise ValueError("No concept data found")
+    
+    first_concept = list(all_concepts)[0]
+    if first_concept in concept_data_concept and concept_data_concept[first_concept]:
+        all_layers = sorted(concept_data_concept[first_concept].keys())
+    elif first_concept in concept_data_random and concept_data_random[first_concept]:
+        all_layers = sorted(concept_data_random[first_concept].keys())
+    else:
+        raise ValueError("No layer data found")
+    
+    num_layers = len(all_layers)
+    num_rows = (num_layers + cols_per_row - 1) // cols_per_row
+    
+    # Colors for concepts
+    colors = {
+        'safety': '#A23B72',
+        'language_en_fr': '#2E86AB',
+        'sycophantic': '#F18F01',
+        'evil': '#C73E1D',
+        'optimistic': '#06A77D',
+    }
+    color_list = ['#2E86AB', '#A23B72', '#F18F01', '#06A77D', '#C73E1D', '#FFA726', '#26C6A0']
+    concept_colors = {}
+    for i, concept in enumerate(sorted(all_concepts)):
+        concept_colors[concept] = colors.get(concept, color_list[i % len(color_list)])
+    
+    # Line styles: solid for cos_delta_v (steering), dashed for cos_delta_h0 (original)
+    direction_styles = {
+        'cos_delta_v': {'linestyle': '-', 'marker': 'o', 'markersize': 3},
+        'cos_delta_h0': {'linestyle': '--', 'marker': 's', 'markersize': 3},
+    }
+    direction_labels = {
+        'cos_delta_v': 'vs Steering',
+        'cos_delta_h0': 'vs Original',
+    }
+    
+    fig, axes = plt.subplots(num_rows, cols_per_row, 
+                             figsize=(cols_per_row * 3.2, num_rows * 2.8), dpi=300,
+                             squeeze=False)
+    
+    for layer_idx, layer_num in enumerate(all_layers):
+        row = layer_idx // cols_per_row
+        col = layer_idx % cols_per_row
+        ax = axes[row, col]
+        
+        for concept_name in sorted(all_concepts):
+            base_color = concept_colors[concept_name]
+            
+            # Plot concept vector results
+            if concept_name in concept_data_concept and layer_num in concept_data_concept[concept_name]:
+                results = concept_data_concept[concept_name][layer_num]
+                alpha = _to_np(results["alpha"])
+                
+                for dir_type, style in direction_styles.items():
+                    if dir_type in results:
+                        dir_val = _to_np(results[dir_type])
+                        mask = np.isfinite(alpha) & np.isfinite(dir_val)
+                        if np.any(mask):
+                            label = f"{concept_name} {direction_labels[dir_type]}" if layer_idx == 0 else ""
+                            ax.plot(alpha[mask], dir_val[mask], 
+                                   color=base_color, label=label,
+                                   linewidth=2.0, alpha=0.9,
+                                   linestyle=style['linestyle'],
+                                   marker=style['marker'], markersize=style['markersize'],
+                                   markevery=max(1, len(alpha[mask]) // 10))
+            
+            # Plot random vector results (gray, thinner)
+            if concept_name in concept_data_random and layer_num in concept_data_random[concept_name]:
+                results = concept_data_random[concept_name][layer_num]
+                alpha = _to_np(results["alpha"])
+                
+                for dir_type, style in direction_styles.items():
+                    if dir_type in results:
+                        dir_val = _to_np(results[dir_type])
+                        mask = np.isfinite(alpha) & np.isfinite(dir_val)
+                        if np.any(mask):
+                            label = f"Rand {direction_labels[dir_type]}" if layer_idx == 0 and concept_name == sorted(all_concepts)[0] else ""
+                            ax.plot(alpha[mask], dir_val[mask], 
+                                   color='#888888', label=label,
+                                   linewidth=1.0, alpha=0.5,
+                                   linestyle=':',
+                                   marker='x', markersize=2,
+                                   markevery=max(1, len(alpha[mask]) // 10))
+        
+        ax.set_xscale("log")
+        ax.axhline(y=0, color='gray', linestyle=':', linewidth=0.8, alpha=0.5)
+        ax.set_ylim(-1.1, 1.1)
+        ax.set_title(f"L{layer_num}", fontweight='bold', fontsize=9, pad=4)
+        ax.grid(True, alpha=0.25, linestyle='--', linewidth=0.6)
+        ax.set_axisbelow(True)
+        ax.tick_params(axis='both', labelsize=8)
+        
+        # Only show x/y labels on edge subplots
+        if row == num_rows - 1:
+            ax.set_xlabel("α", fontsize=9)
+        if col == 0:
+            ax.set_ylabel("Cosine", fontsize=9)
+    
+    # Hide unused subplots
+    for layer_idx in range(num_layers, num_rows * cols_per_row):
+        row = layer_idx // cols_per_row
+        col = layer_idx % cols_per_row
+        axes[row, col].set_visible(False)
+    
+    fig.suptitle(f"{model_name} | Directional Change (—: vs Steering, --: vs Original)", 
+                 fontweight='bold', fontsize=12, y=0.995)
+    
+    # Collect legend handles first to determine space needed
+    handles, labels = axes[0, 0].get_legend_handles_labels()
+    num_legend_rows = (len(handles) + 5) // 6 if handles else 0
+    legend_height = 0.04 + num_legend_rows * 0.025  # Dynamic height based on legend rows
+    
+    plt.tight_layout()
+    plt.subplots_adjust(top=0.92, bottom=legend_height + 0.08, hspace=0.35, wspace=0.25)
+    
+    # Add legend at bottom with proper spacing
+    if handles:
+        fig.legend(handles, labels, loc='upper center', bbox_to_anchor=(0.5, legend_height + 0.02),
+                  ncol=min(6, len(handles)), frameon=True, fancybox=True, 
+                  framealpha=0.95, edgecolor='black', fontsize=8)
     
     if outpath:
         plt.savefig(outpath, dpi=300, bbox_inches='tight', format='pdf')
@@ -274,7 +460,7 @@ def plot_by_concept(
     """
     Plot directional change in subplots organized by concept.
     Layout: one row per concept, columns are layers.
-    Each subplot shows both cos_delta_v and cos_delta_h0.
+    Both cos_delta_v and cos_delta_h0 are plotted in the same panel for each layer.
     
     Args:
         model_name: Name of the model
@@ -332,10 +518,10 @@ def plot_by_concept(
     num_concepts = len(all_concepts)
     sorted_concepts = sorted(all_concepts)
     
-    # Colors for direction types
-    dir_colors = {
-        'cos_delta_v': '#2E86AB',
-        'cos_delta_h0': '#A23B72', 
+    # Line styles: solid for cos_delta_v, dashed for cos_delta_h0
+    dir_styles = {
+        'cos_delta_v': {'color': '#2E86AB', 'linestyle': '-', 'marker': 'o', 'markersize': 3},
+        'cos_delta_h0': {'color': '#A23B72', 'linestyle': '--', 'marker': 's', 'markersize': 3},
     }
     
     # Create figure: rows = concepts, cols = layers
@@ -350,12 +536,12 @@ def plot_by_concept(
         for layer_idx, layer_num in enumerate(all_layers):
             ax = axes[concept_idx, layer_idx]
             
-            # Plot concept vector directions
+            # Plot concept vector directions (solid, thick, colored)
             if concept_name in concept_data_concept and layer_num in concept_data_concept[concept_name]:
                 results = concept_data_concept[concept_name][layer_num]
                 alpha = _to_np(results["alpha"])
                 
-                for dir_type, color in dir_colors.items():
+                for dir_type, style in dir_styles.items():
                     if dir_type in results:
                         dir_val = _to_np(results[dir_type])
                         mask = np.isfinite(alpha) & np.isfinite(dir_val)
@@ -363,15 +549,18 @@ def plot_by_concept(
                             short_name = dir_type.replace('cos_delta_', '')
                             label = f"{short_name} (C)" if concept_idx == 0 and layer_idx == 0 else ""
                             ax.plot(alpha[mask], dir_val[mask], 
-                                   color=color, label=label,
-                                   linewidth=2.0, alpha=0.8, linestyle='-')
+                                   color=style['color'], label=label,
+                                   linewidth=3.0, alpha=0.95,
+                                   linestyle=style['linestyle'],
+                                   marker=style['marker'], markersize=style['markersize'],
+                                   markevery=max(1, len(alpha[mask]) // 20))
             
-            # Plot random vector directions
+            # Plot random vector directions (dotted, thin, gray)
             if concept_name in concept_data_random and layer_num in concept_data_random[concept_name]:
                 results = concept_data_random[concept_name][layer_num]
                 alpha = _to_np(results["alpha"])
                 
-                for dir_type, color in dir_colors.items():
+                for dir_type, style in dir_styles.items():
                     if dir_type in results:
                         dir_val = _to_np(results[dir_type])
                         mask = np.isfinite(alpha) & np.isfinite(dir_val)
@@ -379,8 +568,9 @@ def plot_by_concept(
                             short_name = dir_type.replace('cos_delta_', '')
                             label = f"{short_name} (R)" if concept_idx == 0 and layer_idx == 0 else ""
                             ax.plot(alpha[mask], dir_val[mask], 
-                                   color=color, label=label,
-                                   linewidth=2.0, alpha=0.5, linestyle='--')
+                                   color='#888888', label=label,
+                                   linewidth=1.5, alpha=0.7, linestyle=':', marker='x', markersize=2,
+                                   markevery=max(1, len(alpha[mask]) // 20))
             
             ax.set_xscale("log")
             ax.axhline(y=0, color='gray', linestyle=':', linewidth=1, alpha=0.5)
@@ -391,22 +581,26 @@ def plot_by_concept(
             if layer_idx == 0:
                 ax.set_ylabel(f"{concept_name}\nCosine", fontweight='bold', fontsize=10)
             
-            ax.set_title(f"Layer {layer_num}", fontweight='bold', pad=8, fontsize=11)
+            ax.set_title(f"L{layer_num}", fontweight='bold', pad=8, fontsize=11)
             ax.grid(True, alpha=0.3, linestyle='--', linewidth=0.8)
             ax.set_axisbelow(True)
-    
-    # Add legend
-    handles, labels = axes[0, 0].get_legend_handles_labels()
-    if handles:
-        fig.legend(handles, labels, loc='upper center', bbox_to_anchor=(0.5, 0.02),
-                  ncol=4, frameon=True, fancybox=True, framealpha=0.95, 
-                  edgecolor='black', fontsize=9)
     
     fig.suptitle(f"{model_name} | Directional Change by Concept", 
                  fontweight='bold', fontsize=16, y=0.995)
     
+    # Collect legend handles first
+    handles, labels = axes[0, 0].get_legend_handles_labels()
+    num_legend_rows = (len(handles) + 3) // 4 if handles else 0
+    legend_height = 0.03 + num_legend_rows * 0.025
+    
     plt.tight_layout()
-    plt.subplots_adjust(top=0.95, bottom=0.06)
+    plt.subplots_adjust(top=0.93, bottom=legend_height + 0.06)
+    
+    # Add legend at bottom (outside plot area)
+    if handles:
+        fig.legend(handles, labels, loc='upper center', bbox_to_anchor=(0.5, legend_height),
+                  ncol=4, frameon=True, fancybox=True, framealpha=0.95, 
+                  edgecolor='black', fontsize=9)
     
     if outpath:
         plt.savefig(outpath, dpi=300, bbox_inches='tight', format='pdf')
@@ -423,6 +617,10 @@ def main():
                    help="model name (e.g., 'EleutherAI/pythia-70m'). If not provided, will plot all detected models")
     ap.add_argument("--by-concept", action="store_true", 
                    help="use concept-based layout (concepts as rows, layers as columns)")
+    ap.add_argument("--compact", action="store_true",
+                   help="use compact grid layout (multiple layers per row, both metrics in each subplot)")
+    ap.add_argument("--cols", type=int, default=6,
+                   help="number of columns (layers per row) for compact layout (default: 6)")
     args = ap.parse_args()
 
     os.makedirs(args.outdir, exist_ok=True)
@@ -472,7 +670,17 @@ def main():
         if concept_files_concept or concept_files_random:
             model_short = model_name.split("/")[-1]
             
-            if args.by_concept:
+            if args.compact:
+                output_filename = f"direction_change_compact_{model_short}.pdf"
+                output_path = None if args.show else os.path.join(args.outdir, output_filename)
+                plot_compact_grid(
+                    model_name,
+                    concept_files_concept if concept_files_concept else [],
+                    concept_files_random if concept_files_random else [],
+                    output_path,
+                    cols_per_row=args.cols,
+                )
+            elif args.by_concept:
                 output_filename = f"direction_change_by_concept_{model_short}.pdf"
                 output_path = None if args.show else os.path.join(args.outdir, output_filename)
                 plot_by_concept(

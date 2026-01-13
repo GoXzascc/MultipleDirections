@@ -16,7 +16,7 @@ from tqdm import tqdm
 
 def linear():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", type=str, default="Qwen/Qwen3-1.7B")
+    parser.add_argument("--model", type=str, default="Qwen/Qwen3-0.6B")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--test_size", type=int, default=16)
     parser.add_argument("--alpha_min", type=float, default=1e-3)
@@ -281,16 +281,15 @@ def model_steering(
             v_alpha = (x0 - x1) / eps_tensor  # [batch*seq, d]
             v_prev = (x1 - x2) / eps_tensor  # [batch*seq, d] - v(alpha - eps)
 
-        # Compute global curvature using Frobenius norm over all tokens
-        # No averaging - treats all tokens as one representation
+        # Compute curvature: L2 norm over last dim, then average over tokens
         # All computations in float64
-        num = torch.norm(v_alpha - v_prev, p=2)  # Frobenius norm, scalar, float64
+        num = torch.norm(v_alpha - v_prev, p=2, dim=-1)  # [batch*seq] -> scalar
         den = (
-            torch.norm(v_alpha, p=2)
-            + torch.norm(v_prev, p=2)
+            torch.norm(v_alpha, p=2, dim=-1)
+            + torch.norm(v_prev, p=2, dim=-1)
             + torch.tensor(denom_eps, dtype=torch.float64, device=x0.device)
-        )  # scalar, float64
-        kappa = (num / den).item()  # scalar, float64 -> Python float
+        )  # [batch*seq] -> scalar
+        kappa = (num / den).mean().item()  # average over tokens, scalar, float64 -> Python float
 
         yield {
             "alpha": torch.tensor(alpha, dtype=torch.float32),
