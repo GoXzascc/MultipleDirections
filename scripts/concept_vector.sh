@@ -21,7 +21,7 @@ method="difference-in-means"
 for model_name in "${models[@]}"; do
   for concept_category in "${concepts[@]}"; do
     echo "Running for model=$model_name, concept=$concept_category"
-    uv run src/concept_vector.py \
+    uv run src/extract_concepts.py \
       --model "$model_name" \
       --concept_category "$concept_category" \
       --method "$method"

@@ -8,8 +8,8 @@ from utils import (
     CONCEPT_CATEGORIES,
     set_seed,
     _get_layers_container,
-    load_concept_datasets,
 )
+from extract_concepts import load_concept_datasets
 from loguru import logger
 from tqdm import tqdm
 
