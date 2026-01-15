@@ -10,24 +10,9 @@ MODEL_LAYERS = {
     "EleutherAI/pythia-160m": 12,
     "google/gemma-2-2b": 26,
     "google/gemma-2-9b": 42,
-    "Qwen/Qwen3-0.6B": 27,
 }
 
 CONCEPT_CATEGORIES = {
-    "safety": {
-        "base_path": "dataset/harmbench",
-        "dataset_key": "instruction",
-        "loader_type": "separate_files",
-        "positive_file": "harmful_data.jsonl",
-        "negative_file": "harmless_data.jsonl",
-    },
-    "language_en_fr": {
-        "base_path": "dataset/language_translation",
-        "dataset_key": "text",
-        "loader_type": "separate_files",
-        "positive_file": "en.jsonl",
-        "negative_file": "fr.jsonl",
-    },
     "sycophantic": {
         "base_path": "dataset/sycophantic.json",
         "dataset_key": "instruction",
@@ -42,6 +27,18 @@ CONCEPT_CATEGORIES = {
     },
     "optimistic": {
         "base_path": "dataset/optimistic.json",
+        "dataset_key": "instruction",
+        "loader_type": "single_file_with_pos_neg",
+        "instruction_key": "instruction",
+    },
+    "language_en_fr_paired": {
+        "base_path": "dataset/en_fr.json",
+        "dataset_key": "instruction",
+        "loader_type": "single_file_with_pos_neg",
+        "instruction_key": "instruction",
+    },
+    "refusal": {
+        "base_path": "dataset/refusal.json",
         "dataset_key": "instruction",
         "loader_type": "single_file_with_pos_neg",
         "instruction_key": "instruction",

@@ -247,7 +247,6 @@ def get_concept_vectors(
     Returns:
         torch.Tensor: the concept vectors
     """
-    # TODO: more methods
     if methods == "difference-in-means":
         difference_in_means = DifferenceInMeans(
             model,
@@ -402,7 +401,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--max_dataset_size",
         type=int,
-        default=300,
+        default=30,
         help="Maximum size of the dataset to use",
     )
     
