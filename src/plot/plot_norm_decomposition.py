@@ -185,6 +185,12 @@ def plot_all_layers_all_concepts(
         all_layers = sorted(concept_data_random[first_concept].keys())
     else:
         raise ValueError("No layer data found")
+    
+    # Only plot middle layer
+    if len(all_layers) > 0:
+        mid_idx = len(all_layers) // 2
+        all_layers = [all_layers[mid_idx]]
+    
     num_layers = len(all_layers)
     
     # Professional color palette
@@ -204,10 +210,10 @@ def plot_all_layers_all_concepts(
     
     # Create figure: each layer has 6 subplots (3 for A, 3 for B)
     # Layout: rows = layers, cols = 6 norm types (A: total, parallel, ortho; B: total, parallel, ortho)
-    norm_types_A = ['total_norm_A', 'parallel_norm_A', 'ortho_norm_A']
-    norm_types_B = ['total_norm_B', 'parallel_norm_B', 'ortho_norm_B']
+    norm_types_A = ['parallel_norm_A', 'ortho_norm_A']
+    norm_types_B = ['parallel_norm_B', 'ortho_norm_B']
     # Fallback for old format (without A/B suffix)
-    norm_types_old = ['total_norm', 'parallel_norm', 'ortho_norm']
+    norm_types_old = ['parallel_norm', 'ortho_norm']
     
     norm_labels = {
         'total_norm_A': r'$\|h(\alpha) - \alpha v\|$',
@@ -236,8 +242,8 @@ def plot_all_layers_all_concepts(
     # Line styles for norm types (solid, dashed, dotted)
     norm_type_linestyles = {
         'total': '-',
-        'parallel': '--', 
-        'ortho': ':',
+        'parallel': '-',  # Changed to solid for visibility
+        'ortho': ':',     # Kept as dotted
     }
     
     if use_new_format:
@@ -255,7 +261,7 @@ def plot_all_layers_all_concepts(
         layers_per_row = 3
         num_layer_groups = (num_layers + layers_per_row - 1) // layers_per_row  # Ceiling division
         rows_per_decomp_group = num_layer_groups * 2  # Each layer group needs 2 rows (concept + random)
-        num_rows = rows_per_decomp_group * 3  # 3 groups: A, B, and h_alpha_norm
+        num_rows = rows_per_decomp_group * 2  # 2 groups: A and B
         num_cols = layers_per_row
         
         fig, axes = plt.subplots(num_rows, num_cols, figsize=(num_cols * 4.5, num_rows * 3.5), dpi=300)
@@ -275,7 +281,6 @@ def plot_all_layers_all_concepts(
         decomp_configs = [
             (0, norm_types_A, "A: h - αv"),  # A group starts at row 0
             (rows_per_decomp_group, norm_types_B, "B: Δh - αv"),  # B group starts after A rows
-            (rows_per_decomp_group * 2, ['h_alpha_norm'], "h(α) Norm"),  # h_alpha_norm group starts after B rows
         ]
         
         for decomp_group_offset, norm_types, decomp_label in decomp_configs:
@@ -319,12 +324,15 @@ def plot_all_layers_all_concepts(
                                     # Only add label once (first concept subplot)
                                     show_label = (decomp_group_offset == 0 and layer_idx == 0)
                                     label = f"{concept_name} {norm_key}" if show_label else ""
+                                    linew = 2.0 if norm_key == 'parallel' else 1.5
+                                    alp = 0.9 if norm_key == 'parallel' else 0.7
+                                    
                                     ax_concept.plot(alpha[mask], norm_val[mask], 
                                            color=concept_color,
                                            label=label,
-                                           linewidth=1.5, 
+                                           linewidth=linew, 
                                            linestyle=linestyle,
-                                           alpha=0.85)
+                                           alpha=alp)
                                     
                                     # Plot standard deviation as shaded area
                                     norm_std_key = f"{norm_type}_std"
@@ -371,11 +379,14 @@ def plot_all_layers_all_concepts(
                                     # Only add label once (first random subplot)
                                     show_label = (decomp_group_offset == 0 and layer_idx == 0)
                                     label = f"{concept_name} {norm_key} (rand)" if show_label else ""
+                                    linew = 1.8 if norm_key == 'parallel' else 1.2
+                                    alp = 0.7 if norm_key == 'parallel' else 0.5
+                                    
                                     ax_random.plot(alpha[mask], norm_val[mask], 
                                            color=concept_color,
-                                           linewidth=1.2, 
+                                           linewidth=linew, 
                                            linestyle=linestyle,
-                                           alpha=0.6)
+                                           alpha=alp)
                                     
                                     # Plot standard deviation as shaded area
                                     norm_std_key = f"{norm_type}_std"
@@ -456,7 +467,7 @@ def plot_all_layers_all_concepts(
                     spine.set_color('#333333')
         
         # Hide unused subplots (when layers don't fill the last group)
-        for decomp_group_offset in [0, rows_per_decomp_group, rows_per_decomp_group * 2]:
+        for decomp_group_offset in [0, rows_per_decomp_group]:
             for layer_idx in range(num_layers, num_layer_groups * layers_per_row):
                 row_idx_concept, col_idx = get_ax_position(layer_idx, decomp_group_offset, is_random=False)
                 row_idx_random, _ = get_ax_position(layer_idx, decomp_group_offset, is_random=True)
@@ -607,19 +618,19 @@ def plot_all_layers_all_concepts(
     
     # Add linestyle entries for norm types
     if use_new_format:
-        legend_handles.append(Line2D([0], [0], color='gray', linewidth=1.5, linestyle='-'))
-        legend_labels.append('Total Norm')
-        legend_handles.append(Line2D([0], [0], color='gray', linewidth=1.5, linestyle='--'))
+        # legend_handles.append(Line2D([0], [0], color='gray', linewidth=1.5, linestyle='-'))
+        # legend_labels.append('Total Norm')
+        legend_handles.append(Line2D([0], [0], color='gray', linewidth=2.0, linestyle='-'))
         legend_labels.append('Parallel Norm')
         legend_handles.append(Line2D([0], [0], color='gray', linewidth=1.5, linestyle=':'))
         legend_labels.append('Ortho Norm')
-        legend_handles.append(Line2D([0], [0], color='gray', linewidth=1.5, linestyle='-', alpha=0.5))
-        legend_labels.append('h(α) Norm')
-        legend_handles.append(Line2D([0], [0], color='black', linewidth=1.0, linestyle='-.', alpha=0.5))
-        legend_labels.append('h(0) Norm (baseline)')
+        # legend_handles.append(Line2D([0], [0], color='gray', linewidth=1.5, linestyle='-', alpha=0.5))
+        # legend_labels.append('h(α) Norm')
+        # legend_handles.append(Line2D([0], [0], color='black', linewidth=1.0, linestyle='-.', alpha=0.5))
+        # legend_labels.append('h(0) Norm (baseline)')
     else:
-        legend_handles.append(Line2D([0], [0], color='gray', linewidth=1.5, linestyle='-'))
-        legend_labels.append('Total Norm')
+        # legend_handles.append(Line2D([0], [0], color='gray', linewidth=1.5, linestyle='-'))
+        # legend_labels.append('Total Norm')
         legend_handles.append(Line2D([0], [0], color='gray', linewidth=1.5, linestyle='--'))
         legend_labels.append('Parallel Norm')
         legend_handles.append(Line2D([0], [0], color='gray', linewidth=1.5, linestyle=':'))
@@ -706,7 +717,7 @@ def plot_norm_comparison(
     
     # Colors for norm types
     norm_colors = {
-        'total_norm': '#2E86AB',
+        # 'total_norm': '#2E86AB',
         'parallel_norm': '#A23B72', 
         'ortho_norm': '#06A77D',
     }
@@ -807,6 +818,15 @@ def main():
             print("Error: No models found in assets/norm_decomposition/")
             print("Please specify --model <model_name> or ensure norm decomposition files exist")
             return
+            
+        # User requested filter: only gemma2 2b and qwen3 1.7B
+        targets = ['gemma-2-2b', 'Qwen3-1.7B']
+        filtered_models = {}
+        for m_name, m_dir in models_to_plot.items():
+            if any(t in m_name for t in targets) or any(t in m_dir for t in targets):
+                filtered_models[m_name] = m_dir
+        models_to_plot = filtered_models
+        
         print(f"Found {len(models_to_plot)} models to plot:")
         for model_name, model_dir in models_to_plot.items():
             print(f"  - {model_name} (dir: {model_dir})")
