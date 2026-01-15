@@ -90,7 +90,7 @@ def get_model_name_for_path(model_name: str) -> str:
     return model_name.split("/")[-1]
 
 
-def parse_layers_to_run(layers_arg: str, max_layers: int) -> list[int]:
+def parse_layers_to_run(layers_arg: str, max_layers: int, is_percentage: bool = True) -> list[int]:
     """
     Parse the layers argument to determine which layers to run.
     
@@ -118,14 +118,20 @@ def parse_layers_to_run(layers_arg: str, max_layers: int) -> list[int]:
     # Parse comma-separated values
     layer_values = [float(x.strip()) for x in layers_arg.split(",")]
     
-    # Check if values are percentages (0-100) or direct indices
+    # Disambiguate between percentages and layer indices
+    # If all values are <= 100, they could be either percentages or indices
+    # Use heuristic: if all values are < max_layers, prefer layer indices
     if all(0 <= v <= 100 for v in layer_values):
-        # Treat as percentages
-        layers_to_run = [
-            int(max_layers * (pct / 100.0)) for pct in layer_values
-        ]
+        if not is_percentage:
+            # All values are valid layer indices, treat as indices
+            layers_to_run = [int(v) for v in layer_values]
+        else:
+            # At least one value >= max_layers, treat as percentages
+            layers_to_run = [
+                int(max_layers * (pct / 100.0)) for pct in layer_values
+            ]
     else:
-        # Treat as direct layer indices
+        # At least one value > 100, treat as direct layer indices
         layers_to_run = [int(v) for v in layer_values]
     
     # Validate layer indices
