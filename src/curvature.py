@@ -10,6 +10,7 @@ from utils import (
     run_model_with_steering,
     hidden_to_flat,
     get_model_name_for_path,
+    parse_layers_to_run,
 )
 from extract_concepts import load_concept_datasets
 from loguru import logger
@@ -26,6 +27,12 @@ def linear():
     )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--test_size", type=int, default=16)
+    parser.add_argument(
+        "--max_tokens",
+        type=int,
+        default=500,
+        help="Maximum number of tokens to use from the dataset",
+    )
     parser.add_argument("--alpha_min", type=float, default=1e-3)
     parser.add_argument("--alpha_max", type=float, default=1e7)
     parser.add_argument("--alpha_points", type=int, default=200)
@@ -74,28 +81,7 @@ def linear():
             tokenizer.pad_token = tokenizer.eos_token
         
         # Parse layers argument
-        if args.layers.lower() == "all":
-            layers_to_run = list(range(max_layers - 1))
-        else:
-            # Parse comma-separated values
-            layer_values = [float(x.strip()) for x in args.layers.split(",")]
-            
-            # Check if values are percentages (0-100) or direct indices
-            if all(0 <= v <= 100 for v in layer_values):
-                # Treat as percentages
-                layers_to_run = [
-                    int(max_layers * (pct / 100.0)) for pct in layer_values
-                ]
-            else:
-                # Treat as direct layer indices
-                layers_to_run = [int(v) for v in layer_values]
-            
-            # Validate layer indices
-            layers_to_run = [
-                layer_idx
-                for layer_idx in layers_to_run
-                if 0 <= layer_idx < max_layers - 1
-            ]
+        layers_to_run = parse_layers_to_run(args.layers, max_layers)
         
         logger.info(f"Total layers in model: {max_layers}")
         logger.info(f"Layers to run: {layers_to_run}")
@@ -108,10 +94,39 @@ def linear():
             positive_dataset, negative_dataset, dataset_key = load_concept_datasets(
                 concept_category_name, concept_category_config
             )
-            actual_size = min(args.test_size, len(positive_dataset))
-            input_prompts = positive_dataset[:actual_size][dataset_key]
+            
+            # Select prompts to meet max_tokens constraint
+            selected_prompts = []
+            total_tokens = 0
+            for i in range(min(args.test_size, len(positive_dataset))):
+                prompt = positive_dataset[i][dataset_key]
+                # Tokenize to check length
+                tokens = tokenizer(prompt, return_tensors="pt", truncation=False)
+                prompt_length = tokens.input_ids.shape[1]
+                
+                # Check if adding this prompt would exceed max_tokens
+                if total_tokens + prompt_length > args.max_tokens and len(selected_prompts) > 0:
+                    break
+                
+                selected_prompts.append(prompt)
+                total_tokens += prompt_length
+                
+                # Stop if we've reached max_tokens
+                if total_tokens >= args.max_tokens:
+                    break
+            
+            logger.info(
+                f"Selected {len(selected_prompts)} prompts with ~{total_tokens} tokens "
+                f"for {concept_category_name}"
+            )
+            
+            # Tokenize all selected prompts together
             input_ids = tokenizer(
-                input_prompts, return_tensors="pt", truncation=True, padding=True
+                selected_prompts,
+                return_tensors="pt",
+                truncation=True,
+                padding=True,
+                max_length=args.max_tokens,
             ).to(device)
             input_ids = input_ids.input_ids
 
@@ -165,6 +180,7 @@ def linear():
                         alpha_list: list[torch.Tensor] = []
                         eps_list: list[torch.Tensor] = []
                         kappa_list: list[torch.Tensor] = []
+                        kappa_std_list: list[torch.Tensor] = []
 
                         for item in model_steering(
                             model=model,
@@ -187,6 +203,7 @@ def linear():
                             alpha_list.append(item["alpha"])
                             eps_list.append(item["eps"])
                             kappa_list.append(item["kappa"])
+                            kappa_std_list.append(item["kappa_std"])
 
                         results[layer_idx] = {
                             "alpha": (
@@ -195,6 +212,9 @@ def linear():
                             "eps": torch.stack(eps_list) if eps_list else torch.empty((0,)),
                             "kappa": (
                                 torch.stack(kappa_list) if kappa_list else torch.empty((0,))
+                            ),
+                            "kappa_std": (
+                                torch.stack(kappa_std_list) if kappa_std_list else torch.empty((0,))
                             ),
                             "layer_idx": layer_idx,
                         }
@@ -339,20 +359,23 @@ def model_steering(
 
         # Compute curvature: L2 norm over last dim, then average over tokens
         # All computations in float64
-        num = torch.norm(v_alpha - v_prev, p=2, dim=-1)  # [batch*seq] -> scalar
+        num = torch.norm(v_alpha - v_prev, p=2, dim=-1)  # [batch*seq]
         den = (
             torch.norm(v_alpha, p=2, dim=-1)
             + torch.norm(v_prev, p=2, dim=-1)
             + torch.tensor(denom_eps, dtype=torch.float64, device=x0.device)
-        )  # [batch*seq] -> scalar
-        kappa = (
-            (num / den).mean().item()
-        )  # average over tokens, scalar, float64 -> Python float
+        )  # [batch*seq]
+        kappa_per_token = num / den  # [batch*seq] - curvature per token
+        
+        # Compute mean and std across tokens
+        kappa_mean = kappa_per_token.mean().item()  # scalar, float64 -> Python float
+        kappa_std = kappa_per_token.std().item()  # scalar, float64 -> Python float
 
         yield {
             "alpha": torch.tensor(alpha, dtype=torch.float32),
             "eps": torch.tensor(eps, dtype=torch.float32),
-            "kappa": torch.tensor(kappa, dtype=torch.float32),
+            "kappa": torch.tensor(kappa_mean, dtype=torch.float32),
+            "kappa_std": torch.tensor(kappa_std, dtype=torch.float32),
         }
 
 

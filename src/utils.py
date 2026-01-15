@@ -4,12 +4,12 @@ import hashlib
 import numpy as np
 
 MODEL_LAYERS = {
-    "Qwen/Qwen3-1.7B": 28,
-    # "Qwen/Qwen3-14B": 40,
     "EleutherAI/pythia-70m": 6,
     "EleutherAI/pythia-160m": 12,
     "google/gemma-2-2b": 26,
     # "google/gemma-2-9b": 42,
+    "Qwen/Qwen3-1.7B": 28,
+    # "Qwen/Qwen3-14B": 40,
 }
 
 CONCEPT_CATEGORIES = {
@@ -88,6 +88,54 @@ def get_model_name_for_path(model_name: str) -> str:
         Safe name for file paths (e.g., "gemma-2-2b")
     """
     return model_name.split("/")[-1]
+
+
+def parse_layers_to_run(layers_arg: str, max_layers: int) -> list[int]:
+    """
+    Parse the layers argument to determine which layers to run.
+    
+    Args:
+        layers_arg: String containing layer specification. Can be:
+            - "all": run all layers
+            - Comma-separated percentages (0-100): e.g., "25,50,75"
+            - Comma-separated layer indices: e.g., "5,10,15"
+        max_layers: Total number of layers in the model
+    
+    Returns:
+        List of layer indices to run
+    
+    Examples:
+        >>> parse_layers_to_run("all", 26)
+        [0, 1, 2, ..., 24]
+        >>> parse_layers_to_run("25,50,75", 26)
+        [6, 13, 19]
+        >>> parse_layers_to_run("5,10,15", 26)
+        [5, 10, 15]
+    """
+    if layers_arg.lower() == "all":
+        return list(range(max_layers - 1))
+    
+    # Parse comma-separated values
+    layer_values = [float(x.strip()) for x in layers_arg.split(",")]
+    
+    # Check if values are percentages (0-100) or direct indices
+    if all(0 <= v <= 100 for v in layer_values):
+        # Treat as percentages
+        layers_to_run = [
+            int(max_layers * (pct / 100.0)) for pct in layer_values
+        ]
+    else:
+        # Treat as direct layer indices
+        layers_to_run = [int(v) for v in layer_values]
+    
+    # Validate layer indices
+    layers_to_run = [
+        layer_idx
+        for layer_idx in layers_to_run
+        if 0 <= layer_idx < max_layers - 1
+    ]
+    
+    return layers_to_run
 
 
 def _get_layers_container(hf_model):
