@@ -323,9 +323,9 @@ def compute_velocity_direction(
         
         # Compute velocities
         # v_forward(α) = h(α) - h(α-ε)
-        v_forward = x0 - x1  # [batch*seq, d]
+        v_forward = x0 - x1 - eps * steering_vector.unsqueeze(0).expand_as(x0) # [batch*seq, d]
         # v_backward(α) = h(α-ε) - h(α-2ε)
-        v_backward = x1 - x2  # [batch*seq, d]
+        v_backward = x1 - x2 - eps * steering_vector.unsqueeze(0).expand_as(x1)  # [batch*seq, d]
         
         # Compute cosine similarity between the two velocity vectors
         cos_v_mean, cos_v_std = _cosine_similarity_batch(v_forward, v_backward)

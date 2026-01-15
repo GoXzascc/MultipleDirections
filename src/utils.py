@@ -4,45 +4,45 @@ import hashlib
 import numpy as np
 
 MODEL_LAYERS = {
-    "EleutherAI/pythia-70m": 6,
-    "EleutherAI/pythia-160m": 12,
-    "google/gemma-2-2b": 26,
-    # "google/gemma-2-9b": 42,
+    # "EleutherAI/pythia-70m": 6,
+    # "EleutherAI/pythia-160m": 12,
+    # "google/gemma-2-2b": 26,
+    # # "google/gemma-2-9b": 42,
     "Qwen/Qwen3-1.7B": 28,
     # "Qwen/Qwen3-14B": 40,
 }
 
 CONCEPT_CATEGORIES = {
-    "sycophantic": {
-        "base_path": "dataset/sycophantic.json",
-        "dataset_key": "instruction",
-        "loader_type": "single_file_with_pos_neg",
-        "instruction_key": "instruction",
-    },
-    "evil": {
-        "base_path": "dataset/evil.json",
-        "dataset_key": "instruction",
-        "loader_type": "single_file_with_pos_neg",
-        "instruction_key": "instruction",
-    },
-    "optimistic": {
-        "base_path": "dataset/optimistic.json",
-        "dataset_key": "instruction",
-        "loader_type": "single_file_with_pos_neg",
-        "instruction_key": "instruction",
-    },
+    # "sycophantic": {
+    #     "base_path": "dataset/sycophantic.json",
+    #     "dataset_key": "instruction",
+    #     "loader_type": "single_file_with_pos_neg",
+    #     "instruction_key": "instruction",
+    # },
+    # "evil": {
+    #     "base_path": "dataset/evil.json",
+    #     "dataset_key": "instruction",
+    #     "loader_type": "single_file_with_pos_neg",
+    #     "instruction_key": "instruction",
+    # },
+    # "optimistic": {
+    #     "base_path": "dataset/optimistic.json",
+    #     "dataset_key": "instruction",
+    #     "loader_type": "single_file_with_pos_neg",
+    #     "instruction_key": "instruction",
+    # },
     "language_en_fr_paired": {
         "base_path": "dataset/en_fr.json",
         "dataset_key": "instruction",
         "loader_type": "single_file_with_pos_neg",
         "instruction_key": "instruction",
     },
-    "refusal": {
-        "base_path": "dataset/refusal.json",
-        "dataset_key": "instruction",
-        "loader_type": "single_file_with_pos_neg",
-        "instruction_key": "instruction",
-    },
+#     "refusal": {
+#         "base_path": "dataset/refusal.json",
+#         "dataset_key": "instruction",
+#         "loader_type": "single_file_with_pos_neg",
+#         "instruction_key": "instruction",
+#     },
 }
 
 
