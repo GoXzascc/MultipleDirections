@@ -3,6 +3,9 @@
 # Exit on error, undefined variables, and pipe failures
 set -euo pipefail
 
+# Clear any conflicting VIRTUAL_ENV variable to avoid uv warnings
+unset VIRTUAL_ENV
+
 # Color output for better readability
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
@@ -30,8 +33,8 @@ echo ""
 
 # Array of scripts to run
 SCRIPTS=(
-    # "src/extract_concepts.py"
-    # "src/curvature.py"
+    "src/extract_concepts.py"
+    "src/curvature.py"
     "src/direction_alignment.py"
     "src/trajectory_smoothness.py"
     "src/norm_decomposition.py"

@@ -17,7 +17,7 @@ from loguru import logger
 from tqdm import tqdm
 
 
-def linear():
+def curvature():
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--model",
@@ -38,6 +38,7 @@ def linear():
     parser.add_argument("--alpha_points", type=int, default=200)
     parser.add_argument("--eps_rel", type=float, default=1e-2)
     parser.add_argument("--eps_min", type=float, default=1e-5)
+    
     parser.add_argument("--eps_max", type=float, default=1)
     parser.add_argument("--denom_eps", type=float, default=1e-5)
     parser.add_argument(
@@ -49,7 +50,7 @@ def linear():
     args = parser.parse_args()
 
     os.makedirs("logs", exist_ok=True)
-    logger.add("logs/linear.log")
+    logger.add("logs/curvature.log")
     logger.info(f"args: {args}")
     set_seed(args.seed)
     
@@ -60,7 +61,7 @@ def linear():
         else list(MODEL_LAYERS.items())
     )
     
-    logger.info(f"Starting linear measurement...")
+    logger.info(f"Starting curvature measurement...")
     logger.info(f"Models to process: {[model_name for model_name, _ in models_to_process]}")
     device = "cuda"
     dtype = torch.float32
@@ -68,7 +69,7 @@ def linear():
     for model_full_name, max_layers in models_to_process:
         logger.info(f"Processing model: {model_full_name}")
         model_name = get_model_name_for_path(model_full_name)
-        os.makedirs(f"assets/linear/{model_name}", exist_ok=True)
+        os.makedirs(f"assets/curvature/{model_name}", exist_ok=True)
         
         logger.info(f"Loading model: {model_full_name}")
         model = transformers.AutoModelForCausalLM.from_pretrained(
@@ -134,7 +135,7 @@ def linear():
             vector_dim = concept_vectors.shape[1]
 
             # Generate and save a random vector for this concept (reuse if exists)
-            random_vector_dir = f"assets/linear/{model_name}/random_vectors"
+            random_vector_dir = f"assets/curvature/{model_name}/random_vectors"
             os.makedirs(random_vector_dir, exist_ok=True)
             random_vector_path = f"{random_vector_dir}/{concept_category_name}.pt"
 
@@ -220,7 +221,7 @@ def linear():
                         }
 
                     # Save results with different names for concept/random and wo_remove/w_remove
-                    save_path = f"assets/linear/{model_name}/curvature_{concept_category_name}_{vector_type}_{remove_suffix}.pt"
+                    save_path = f"assets/curvature/{model_name}/curvature_{concept_category_name}_{vector_type}_{remove_suffix}.pt"
                     torch.save(
                         {
                             "model": model_full_name,
@@ -380,4 +381,4 @@ def model_steering(
 
 
 if __name__ == "__main__":
-    linear()
+    curvature()

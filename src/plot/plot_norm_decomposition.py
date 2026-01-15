@@ -1,9 +1,13 @@
-# plot_step_length.py
+# plot_norm_decomposition.py
 import os
+import sys
 import argparse
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
+
+# Add parent directory to path to import utils
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from utils import get_model_name_for_path
 
 # Set publication-quality style
@@ -36,7 +40,7 @@ def load_norm_pt(path: str):
     return obj
 
 
-def find_all_models(base_dir="assets/step_length"):
+def find_all_models(base_dir="assets/norm_decomposition"):
     """Find all models that have norm decomposition files."""
     models = {}
     if not os.path.exists(base_dir):
@@ -60,7 +64,7 @@ def find_all_models(base_dir="assets/step_length"):
     return models
 
 
-def find_norm_files_by_model(model_name: str, base_dir="assets/step_length", vector_type: str = None):
+def find_norm_files_by_model(model_name: str, base_dir="assets/norm_decomposition", vector_type: str = None):
     """Find all norm_decomposition_*.pt files for a specific model.
     
     Args:
@@ -237,40 +241,57 @@ def plot_all_layers_all_concepts(
     }
     
     if use_new_format:
-        # New layout: A rows on top, B rows on bottom
-        # Max columns per row (e.g., 6), wrap to multiple rows if needed
-        max_cols = 6
-        num_cols = min(num_layers, max_cols)
-        rows_per_group = (num_layers + max_cols - 1) // max_cols  # Ceiling division
-        num_rows = rows_per_group * 2  # 2 groups: A and B
+        # New layout: 3 layers per row, separate rows for concept and random vectors
+        # Layout for each group (A, B, and h_alpha_norm):
+        #   A Group:
+        #     Row 0: Layer 0, 1, 2 (concept vectors)
+        #     Row 1: Layer 0, 1, 2 (random vectors)
+        #   B Group:
+        #     Row 2: Layer 0, 1, 2 (concept vectors)
+        #     Row 3: Layer 0, 1, 2 (random vectors)
+        #   h(α) Norm Group:
+        #     Row 4: Layer 0, 1, 2 (concept vectors)
+        #     Row 5: Layer 0, 1, 2 (random vectors)
+        layers_per_row = 3
+        num_layer_groups = (num_layers + layers_per_row - 1) // layers_per_row  # Ceiling division
+        rows_per_decomp_group = num_layer_groups * 2  # Each layer group needs 2 rows (concept + random)
+        num_rows = rows_per_decomp_group * 3  # 3 groups: A, B, and h_alpha_norm
+        num_cols = layers_per_row
         
-        fig, axes = plt.subplots(num_rows, num_cols, figsize=(num_cols * 4, num_rows * 3.5), dpi=300)
+        fig, axes = plt.subplots(num_rows, num_cols, figsize=(num_cols * 4.5, num_rows * 3.5), dpi=300)
         if num_rows == 1:
             axes = axes.reshape(1, -1)
         if num_cols == 1:
             axes = axes.reshape(-1, 1)
         
-        # Helper to get (row, col) for a given layer index within a group
-        def get_ax_position(layer_idx, group_offset):
-            row_in_group = layer_idx // max_cols
-            col = layer_idx % max_cols
-            return group_offset + row_in_group, col
+        # Helper to get (row, col) for a given layer index within a decomposition group
+        def get_ax_position(layer_idx, decomp_group_offset, is_random):
+            layer_group_idx = layer_idx // layers_per_row  # Which group of 3 layers
+            col = layer_idx % layers_per_row
+            # Each layer group takes 2 rows (concept + random)
+            row_in_group = layer_group_idx * 2 + (1 if is_random else 0)
+            return decomp_group_offset + row_in_group, col
         
-        row_configs = [
+        decomp_configs = [
             (0, norm_types_A, "A: h - αv"),  # A group starts at row 0
-            (rows_per_group, norm_types_B, "B: Δh - αv"),  # B group starts after A rows
+            (rows_per_decomp_group, norm_types_B, "B: Δh - αv"),  # B group starts after A rows
+            (rows_per_decomp_group * 2, ['h_alpha_norm'], "h(α) Norm"),  # h_alpha_norm group starts after B rows
         ]
         
-        for group_offset, norm_types, row_label in row_configs:
+        for decomp_group_offset, norm_types, decomp_label in decomp_configs:
             for layer_idx, layer_num in enumerate(all_layers):
-                row_idx, col_idx = get_ax_position(layer_idx, group_offset)
-                ax = axes[row_idx, col_idx]
+                # Plot concept vectors
+                row_idx_concept, col_idx = get_ax_position(layer_idx, decomp_group_offset, is_random=False)
+                ax_concept = axes[row_idx_concept, col_idx]
                 
-                # Plot all concepts and all norm types for this layer
-                for concept_idx, concept_name in enumerate(sorted(all_concepts)):
+                # Plot random vectors
+                row_idx_random, col_idx = get_ax_position(layer_idx, decomp_group_offset, is_random=True)
+                ax_random = axes[row_idx_random, col_idx]
+                
+                # Plot all concepts for this layer - concept vectors
+                for concept_name in sorted(all_concepts):
                     concept_color = concept_colors[concept_name]
                     
-                    # Plot concept vector results (solid lines, colored by concept)
                     if concept_name in concept_data_concept and layer_num in concept_data_concept[concept_name]:
                         results = concept_data_concept[concept_name][layer_num]
                         alpha = _to_np(results["alpha"])
@@ -280,26 +301,50 @@ def plot_all_layers_all_concepts(
                                 norm_val = _to_np(results[norm_type])
                                 mask = np.isfinite(alpha) & np.isfinite(norm_val)
                                 
-                                # Determine norm type for linestyle
-                                if 'total' in norm_type:
+                                # Determine norm type for linestyle (for A/B decompositions)
+                                if norm_type == 'h_alpha_norm':
+                                    norm_key = 'h_alpha'
+                                    linestyle = '-'
+                                elif 'total' in norm_type:
                                     norm_key = 'total'
+                                    linestyle = norm_type_linestyles['total']
                                 elif 'parallel' in norm_type:
                                     norm_key = 'parallel'
+                                    linestyle = norm_type_linestyles['parallel']
                                 else:
                                     norm_key = 'ortho'
+                                    linestyle = norm_type_linestyles['ortho']
                                 
                                 if np.any(mask):
-                                    # Only add label once (first subplot)
-                                    show_label = (group_offset == 0 and layer_idx == 0)
+                                    # Only add label once (first concept subplot)
+                                    show_label = (decomp_group_offset == 0 and layer_idx == 0)
                                     label = f"{concept_name} {norm_key}" if show_label else ""
-                                    ax.plot(alpha[mask], norm_val[mask], 
+                                    ax_concept.plot(alpha[mask], norm_val[mask], 
                                            color=concept_color,
                                            label=label,
                                            linewidth=1.5, 
-                                           linestyle=norm_type_linestyles[norm_key],
+                                           linestyle=linestyle,
                                            alpha=0.85)
+                                    
+                                    # Plot standard deviation as shaded area
+                                    norm_std_key = f"{norm_type}_std"
+                                    if norm_std_key in results:
+                                        norm_std = _to_np(results[norm_std_key])
+                                        std_mask = mask & np.isfinite(norm_std)
+                                        if np.any(std_mask):
+                                            ax_concept.fill_between(
+                                                alpha[std_mask],
+                                                norm_val[std_mask] - norm_std[std_mask],
+                                                norm_val[std_mask] + norm_std[std_mask],
+                                                color=concept_color,
+                                                alpha=0.2,
+                                                linewidth=0
+                                            )
+                
+                # Plot all concepts for this layer - random vectors
+                for concept_name in sorted(all_concepts):
+                    concept_color = concept_colors[concept_name]
                     
-                    # Plot random vector results (gray, thinner)
                     if concept_name in concept_data_random and layer_num in concept_data_random[concept_name]:
                         results = concept_data_random[concept_name][layer_num]
                         alpha = _to_np(results["alpha"])
@@ -309,39 +354,116 @@ def plot_all_layers_all_concepts(
                                 norm_val = _to_np(results[norm_type])
                                 mask = np.isfinite(alpha) & np.isfinite(norm_val)
                                 
-                                if 'total' in norm_type:
+                                if norm_type == 'h_alpha_norm':
+                                    norm_key = 'h_alpha'
+                                    linestyle = '-'
+                                elif 'total' in norm_type:
                                     norm_key = 'total'
+                                    linestyle = norm_type_linestyles['total']
                                 elif 'parallel' in norm_type:
                                     norm_key = 'parallel'
+                                    linestyle = norm_type_linestyles['parallel']
                                 else:
                                     norm_key = 'ortho'
+                                    linestyle = norm_type_linestyles['ortho']
                                 
                                 if np.any(mask):
-                                    ax.plot(alpha[mask], norm_val[mask], 
-                                           color='#AAAAAA',
-                                           linewidth=0.8, 
-                                           linestyle=norm_type_linestyles[norm_key],
-                                           alpha=0.5)
+                                    # Only add label once (first random subplot)
+                                    show_label = (decomp_group_offset == 0 and layer_idx == 0)
+                                    label = f"{concept_name} {norm_key} (rand)" if show_label else ""
+                                    ax_random.plot(alpha[mask], norm_val[mask], 
+                                           color=concept_color,
+                                           linewidth=1.2, 
+                                           linestyle=linestyle,
+                                           alpha=0.6)
+                                    
+                                    # Plot standard deviation as shaded area
+                                    norm_std_key = f"{norm_type}_std"
+                                    if norm_std_key in results:
+                                        norm_std = _to_np(results[norm_std_key])
+                                        std_mask = mask & np.isfinite(norm_std)
+                                        if np.any(std_mask):
+                                            ax_random.fill_between(
+                                                alpha[std_mask],
+                                                norm_val[std_mask] - norm_std[std_mask],
+                                                norm_val[std_mask] + norm_std[std_mask],
+                                                color=concept_color,
+                                                alpha=0.15,
+                                                linewidth=0
+                                            )
                 
-                ax.set_xscale("log")
-                ax.set_yscale("log")
-                ax.set_xlabel("Alpha", fontweight='bold', fontsize=9)
-                ax.set_ylabel("Norm", fontweight='bold', fontsize=9)
-                ax.set_title(f"Layer {layer_num} | {row_label}", fontweight='bold', pad=6, fontsize=10)
-                ax.grid(True, alpha=0.3, linestyle='--', linewidth=0.6, axis='both')
-                ax.set_axisbelow(True)
+                # Add h0_norm reference line for h_alpha_norm plots
+                if norm_types == ['h_alpha_norm']:
+                    # Get h0_norm from first available concept
+                    for concept_name in sorted(all_concepts):
+                        if concept_name in concept_data_concept and layer_num in concept_data_concept[concept_name]:
+                            results = concept_data_concept[concept_name][layer_num]
+                            if 'h0_norm' in results:
+                                h0_norm = _to_np(results['h0_norm'])
+                                if np.isfinite(h0_norm):
+                                    ax_concept.axhline(y=h0_norm, color='black', linestyle='-.', 
+                                                      linewidth=1.0, alpha=0.5, label='h(0) norm' if layer_idx == 0 else '')
+                                    # Add h0_norm std as shaded area
+                                    if 'h0_norm_std' in results:
+                                        h0_norm_std = _to_np(results['h0_norm_std'])
+                                        if np.isfinite(h0_norm_std):
+                                            ax_concept.axhspan(h0_norm - h0_norm_std, h0_norm + h0_norm_std,
+                                                             color='black', alpha=0.1, linewidth=0)
+                                    break
+                    
+                    for concept_name in sorted(all_concepts):
+                        if concept_name in concept_data_random and layer_num in concept_data_random[concept_name]:
+                            results = concept_data_random[concept_name][layer_num]
+                            if 'h0_norm' in results:
+                                h0_norm = _to_np(results['h0_norm'])
+                                if np.isfinite(h0_norm):
+                                    ax_random.axhline(y=h0_norm, color='black', linestyle='-.', 
+                                                     linewidth=1.0, alpha=0.5, label='h(0) norm' if layer_idx == 0 else '')
+                                    # Add h0_norm std as shaded area
+                                    if 'h0_norm_std' in results:
+                                        h0_norm_std = _to_np(results['h0_norm_std'])
+                                        if np.isfinite(h0_norm_std):
+                                            ax_random.axhspan(h0_norm - h0_norm_std, h0_norm + h0_norm_std,
+                                                            color='black', alpha=0.1, linewidth=0)
+                                    break
                 
-                # Style spines
-                for spine in ax.spines.values():
+                # Style concept subplot
+                ax_concept.set_xscale("log")
+                ax_concept.set_yscale("log")
+                ax_concept.set_xlabel("Alpha", fontweight='bold', fontsize=9)
+                ax_concept.set_ylabel("Norm", fontweight='bold', fontsize=9)
+                ax_concept.set_title(f"Layer {layer_num} | {decomp_label} | Concept", 
+                                    fontweight='bold', pad=6, fontsize=10)
+                ax_concept.grid(True, alpha=0.3, linestyle='--', linewidth=0.6, axis='both')
+                ax_concept.set_axisbelow(True)
+                
+                for spine in ax_concept.spines.values():
+                    spine.set_linewidth(0.8)
+                    spine.set_color('#333333')
+                
+                # Style random subplot
+                ax_random.set_xscale("log")
+                ax_random.set_yscale("log")
+                ax_random.set_xlabel("Alpha", fontweight='bold', fontsize=9)
+                ax_random.set_ylabel("Norm", fontweight='bold', fontsize=9)
+                ax_random.set_title(f"Layer {layer_num} | {decomp_label} | Random", 
+                                   fontweight='bold', pad=6, fontsize=10)
+                ax_random.grid(True, alpha=0.3, linestyle='--', linewidth=0.6, axis='both')
+                ax_random.set_axisbelow(True)
+                
+                for spine in ax_random.spines.values():
                     spine.set_linewidth(0.8)
                     spine.set_color('#333333')
         
-        # Hide unused subplots (when layers don't fill the grid)
-        for group_offset in [0, rows_per_group]:
-            for layer_idx in range(num_layers, rows_per_group * max_cols):
-                row_idx, col_idx = get_ax_position(layer_idx, group_offset)
-                if row_idx < num_rows and col_idx < num_cols:
-                    axes[row_idx, col_idx].axis('off')
+        # Hide unused subplots (when layers don't fill the last group)
+        for decomp_group_offset in [0, rows_per_decomp_group, rows_per_decomp_group * 2]:
+            for layer_idx in range(num_layers, num_layer_groups * layers_per_row):
+                row_idx_concept, col_idx = get_ax_position(layer_idx, decomp_group_offset, is_random=False)
+                row_idx_random, _ = get_ax_position(layer_idx, decomp_group_offset, is_random=True)
+                if row_idx_concept < num_rows and col_idx < num_cols:
+                    axes[row_idx_concept, col_idx].axis('off')
+                if row_idx_random < num_rows and col_idx < num_cols:
+                    axes[row_idx_random, col_idx].axis('off')
     else:
         # Old format: rows = layers, columns = norm types (total, parallel, ortho)
         # Apply same max_cols logic
@@ -391,6 +513,21 @@ def plot_all_layers_all_concepts(
                                        linewidth=1.5, 
                                        linestyle=norm_type_linestyles[norm_key],
                                        alpha=0.85)
+                                
+                                # Plot standard deviation as shaded area
+                                norm_std_key = f"{norm_type}_std"
+                                if norm_std_key in results:
+                                    norm_std = _to_np(results[norm_std_key])
+                                    std_mask = mask & np.isfinite(norm_std)
+                                    if np.any(std_mask):
+                                        ax.fill_between(
+                                            alpha[std_mask],
+                                            norm_val[std_mask] - norm_std[std_mask],
+                                            norm_val[std_mask] + norm_std[std_mask],
+                                            color=concept_color,
+                                            alpha=0.2,
+                                            linewidth=0
+                                        )
                 
                 # Plot random vector results (gray, thinner)
                 if concept_name in concept_data_random and layer_num in concept_data_random[concept_name]:
@@ -415,6 +552,21 @@ def plot_all_layers_all_concepts(
                                        linewidth=0.8, 
                                        linestyle=norm_type_linestyles[norm_key],
                                        alpha=0.5)
+                                
+                                # Plot standard deviation as shaded area
+                                norm_std_key = f"{norm_type}_std"
+                                if norm_std_key in results:
+                                    norm_std = _to_np(results[norm_std_key])
+                                    std_mask = mask & np.isfinite(norm_std)
+                                    if np.any(std_mask):
+                                        ax.fill_between(
+                                            alpha[std_mask],
+                                            norm_val[std_mask] - norm_std[std_mask],
+                                            norm_val[std_mask] + norm_std[std_mask],
+                                            color='#AAAAAA',
+                                            alpha=0.15,
+                                            linewidth=0
+                                        )
             
             ax.set_xscale("log")
             ax.set_yscale("log")
@@ -441,7 +593,7 @@ def plot_all_layers_all_concepts(
                  fontweight='bold', fontsize=14, y=0.995)
     
     plt.tight_layout()
-    plt.subplots_adjust(top=0.92, bottom=0.12)
+    plt.subplots_adjust(top=0.96, bottom=0.08)
     
     # Create custom legend with concept colors and linestyle explanations
     from matplotlib.lines import Line2D
@@ -454,16 +606,24 @@ def plot_all_layers_all_concepts(
         legend_labels.append(concept_name)
     
     # Add linestyle entries for norm types
-    legend_handles.append(Line2D([0], [0], color='gray', linewidth=1.5, linestyle='-'))
-    legend_labels.append('Total')
-    legend_handles.append(Line2D([0], [0], color='gray', linewidth=1.5, linestyle='--'))
-    legend_labels.append('Parallel')
-    legend_handles.append(Line2D([0], [0], color='gray', linewidth=1.5, linestyle=':'))
-    legend_labels.append('Ortho')
-    
-    # Add gray entry for random vectors
-    legend_handles.append(Line2D([0], [0], color='#AAAAAA', linewidth=0.8, linestyle='-', alpha=0.5))
-    legend_labels.append('Random (gray)')
+    if use_new_format:
+        legend_handles.append(Line2D([0], [0], color='gray', linewidth=1.5, linestyle='-'))
+        legend_labels.append('Total Norm')
+        legend_handles.append(Line2D([0], [0], color='gray', linewidth=1.5, linestyle='--'))
+        legend_labels.append('Parallel Norm')
+        legend_handles.append(Line2D([0], [0], color='gray', linewidth=1.5, linestyle=':'))
+        legend_labels.append('Ortho Norm')
+        legend_handles.append(Line2D([0], [0], color='gray', linewidth=1.5, linestyle='-', alpha=0.5))
+        legend_labels.append('h(α) Norm')
+        legend_handles.append(Line2D([0], [0], color='black', linewidth=1.0, linestyle='-.', alpha=0.5))
+        legend_labels.append('h(0) Norm (baseline)')
+    else:
+        legend_handles.append(Line2D([0], [0], color='gray', linewidth=1.5, linestyle='-'))
+        legend_labels.append('Total Norm')
+        legend_handles.append(Line2D([0], [0], color='gray', linewidth=1.5, linestyle='--'))
+        legend_labels.append('Parallel Norm')
+        legend_handles.append(Line2D([0], [0], color='gray', linewidth=1.5, linestyle=':'))
+        legend_labels.append('Ortho Norm')
     
     if legend_handles:
         fig.legend(legend_handles, legend_labels, loc='lower center', bbox_to_anchor=(0.5, 0.01),
@@ -644,7 +804,7 @@ def main():
     else:
         models_to_plot = find_all_models()
         if not models_to_plot:
-            print("Error: No models found in assets/step_length/")
+            print("Error: No models found in assets/norm_decomposition/")
             print("Please specify --model <model_name> or ensure norm decomposition files exist")
             return
         print(f"Found {len(models_to_plot)} models to plot:")
@@ -683,7 +843,7 @@ def main():
             model_short = get_model_name_for_path(model_name)
             
             if args.comparison:
-                output_filename = f"step_length_comparison_{model_short}.pdf"
+                output_filename = f"norm_decomposition_comparison_{model_short}.pdf"
                 output_path = None if args.show else os.path.join(args.outdir, output_filename)
                 plot_norm_comparison(
                     model_name,
@@ -692,7 +852,7 @@ def main():
                     output_path,
                 )
             else:
-                output_filename = f"step_length_{model_short}.pdf"
+                output_filename = f"norm_decomposition_{model_short}.pdf"
                 output_path = None if args.show else os.path.join(args.outdir, output_filename)
                 plot_all_layers_all_concepts(
                     model_name,

@@ -16,7 +16,7 @@ from loguru import logger
 from tqdm import tqdm
 
 
-def directional_change():
+def direction_alignment():
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--model",
@@ -44,7 +44,7 @@ def directional_change():
     args = parser.parse_args()
 
     os.makedirs("logs", exist_ok=True)
-    logger.add("logs/directional_change.log")
+    logger.add("logs/direction_alignment.log")
     logger.info(f"args: {args}")
     set_seed(args.seed)
     
@@ -55,7 +55,7 @@ def directional_change():
         else list(MODEL_LAYERS.items())
     )
     
-    logger.info(f"Starting directional change measurement...")
+    logger.info(f"Starting direction alignment measurement...")
     logger.info(f"Models to process: {[model_name for model_name, _ in models_to_process]}")
     device = "cuda"
     dtype = torch.bfloat16
@@ -63,7 +63,7 @@ def directional_change():
     for model_full_name, max_layers in models_to_process:
         logger.info(f"Processing model: {model_full_name}")
         model_name = get_model_name_for_path(model_full_name)
-        os.makedirs(f"assets/directional_change/{model_name}", exist_ok=True)
+        os.makedirs(f"assets/direction_alignment/{model_name}", exist_ok=True)
         
         logger.info(f"Loading model: {model_full_name}")
         model = transformers.AutoModelForCausalLM.from_pretrained(
@@ -128,7 +128,7 @@ def directional_change():
             vector_dim = concept_vectors.shape[1]
 
             # Generate and save a random vector for this concept (reuse if exists)
-            random_vector_dir = f"assets/directional_change/{model_name}/random_vectors"
+            random_vector_dir = f"assets/direction_alignment/{model_name}/random_vectors"
             os.makedirs(random_vector_dir, exist_ok=True)
             random_vector_path = f"{random_vector_dir}/{concept_category_name}.pt"
 
@@ -161,7 +161,7 @@ def directional_change():
 
                 for layer_idx in tqdm(
                     layers_to_run,
-                    desc=f"Measuring directional change ({concept_category_name}, {vector_type})",
+                    desc=f"Measuring direction alignment ({concept_category_name}, {vector_type})",
                 ):
                     if vector_type == "concept":
                         # Use the concept vector from the corresponding layer
@@ -185,7 +185,7 @@ def directional_change():
                     results[layer_idx] = layer_results
 
                 # Save results
-                save_path = f"assets/directional_change/{model_name}/directional_change_{concept_category_name}_{vector_type}.pt"
+                save_path = f"assets/direction_alignment/{model_name}/direction_alignment_{concept_category_name}_{vector_type}.pt"
                 torch.save(
                     {
                         "model": model_full_name,
@@ -198,7 +198,7 @@ def directional_change():
                     },
                     save_path,
                 )
-                logger.info(f"Saved directional change ({vector_type}) to {save_path}")
+                logger.info(f"Saved direction alignment ({vector_type}) to {save_path}")
         
         # Clean up model to free memory before next model
         del model
@@ -371,4 +371,4 @@ def compute_directional_change(
 
 
 if __name__ == "__main__":
-    directional_change()
+    direction_alignment()

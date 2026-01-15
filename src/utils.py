@@ -5,44 +5,44 @@ import numpy as np
 
 MODEL_LAYERS = {
     # "EleutherAI/pythia-70m": 6,
-    # "EleutherAI/pythia-160m": 12,
+    "EleutherAI/pythia-160m": 12,
     # "google/gemma-2-2b": 26,
     # # "google/gemma-2-9b": 42,
-    "Qwen/Qwen3-1.7B": 28,
+    # "Qwen/Qwen3-1.7B": 28,
     # "Qwen/Qwen3-14B": 40,
 }
 
 CONCEPT_CATEGORIES = {
-    # "sycophantic": {
-    #     "base_path": "dataset/sycophantic.json",
-    #     "dataset_key": "instruction",
-    #     "loader_type": "single_file_with_pos_neg",
-    #     "instruction_key": "instruction",
-    # },
-    # "evil": {
-    #     "base_path": "dataset/evil.json",
-    #     "dataset_key": "instruction",
-    #     "loader_type": "single_file_with_pos_neg",
-    #     "instruction_key": "instruction",
-    # },
-    # "optimistic": {
-    #     "base_path": "dataset/optimistic.json",
-    #     "dataset_key": "instruction",
-    #     "loader_type": "single_file_with_pos_neg",
-    #     "instruction_key": "instruction",
-    # },
+    "sycophantic": {
+        "base_path": "dataset/sycophantic.json",
+        "dataset_key": "instruction",
+        "loader_type": "single_file_with_pos_neg",
+        "instruction_key": "instruction",
+    },
+    "evil": {
+        "base_path": "dataset/evil.json",
+        "dataset_key": "instruction",
+        "loader_type": "single_file_with_pos_neg",
+        "instruction_key": "instruction",
+    },
+    "optimistic": {
+        "base_path": "dataset/optimistic.json",
+        "dataset_key": "instruction",
+        "loader_type": "single_file_with_pos_neg",
+        "instruction_key": "instruction",
+    },
     "language_en_fr_paired": {
         "base_path": "dataset/en_fr.json",
         "dataset_key": "instruction",
         "loader_type": "single_file_with_pos_neg",
         "instruction_key": "instruction",
     },
-#     "refusal": {
-#         "base_path": "dataset/refusal.json",
-#         "dataset_key": "instruction",
-#         "loader_type": "single_file_with_pos_neg",
-#         "instruction_key": "instruction",
-#     },
+    "refusal": {
+        "base_path": "dataset/refusal.json",
+        "dataset_key": "instruction",
+        "loader_type": "single_file_with_pos_neg",
+        "instruction_key": "instruction",
+    },
 }
 
 
@@ -220,6 +220,85 @@ def run_model_with_steering(
     if h is None:
         raise RuntimeError("Failed to capture hidden states")
     return h
+
+
+def run_model_with_steering_and_ablation(
+    model,
+    input_ids,
+    steering_vector: torch.Tensor,
+    layer_idx: int,
+    alpha_value: float,
+    device,
+    remove_at_last_layer: bool = False,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """
+    Run model with steering applied at a specific layer, optionally removing it at the last layer.
+    Returns both hidden states and logits for comparison.
+    
+    Args:
+        model: The transformer model
+        input_ids: Input token IDs
+        steering_vector: The vector to add at the specified layer
+        layer_idx: Which layer to apply steering at
+        alpha_value: The scaling factor for steering (alpha * steering_vector)
+        device: Device to run on
+        remove_at_last_layer: If True, subtract steering vector at the last layer
+    
+    Returns:
+        Tuple of (hidden_states, logits) from the last layer
+        - hidden_states: [batch, seq, d]
+        - logits: [batch, seq, vocab_size]
+    """
+    layers_container = _get_layers_container(model)
+    target_layer_module = layers_container[layer_idx]
+    last_layer_module = layers_container[len(layers_container) - 1]
+    
+    captured: dict[str, torch.Tensor] = {}
+
+    def _last_layer_forward_hook(_module, _inputs, output):
+        if isinstance(output, tuple):
+            hidden = output[0]
+        else:
+            hidden = output
+        
+        # Optionally remove steering vector at last layer
+        if remove_at_last_layer:
+            vec = steering_vector.to(device=hidden.device, dtype=hidden.dtype)
+            hidden_ablated = hidden - (alpha_value * vec)
+            captured["h"] = hidden_ablated.detach()
+            # Return the ablated hidden states
+            if isinstance(output, tuple):
+                return (hidden_ablated,) + output[1:]
+            else:
+                return hidden_ablated
+        else:
+            captured["h"] = hidden.detach()
+            return output
+
+    def _steer_hook(_module, _inputs, output):
+        if isinstance(output, tuple):
+            hidden = output[0]
+            vec = steering_vector.to(device=hidden.device, dtype=hidden.dtype)
+            hidden = hidden + (alpha_value * vec)
+            return (hidden,) + output[1:]
+        vec = steering_vector.to(device=output.device, dtype=output.dtype)
+        return output + (alpha_value * vec)
+
+    last_handle = last_layer_module.register_forward_hook(_last_layer_forward_hook)
+    steer_handle = target_layer_module.register_forward_hook(_steer_hook)
+    
+    # Run model and get logits
+    outputs = model(input_ids, output_hidden_states=True)
+    logits = outputs.logits
+    
+    steer_handle.remove()
+    last_handle.remove()
+
+    h = captured.get("h", None)
+    if h is None:
+        raise RuntimeError("Failed to capture hidden states")
+    
+    return h, logits
 
 
 def hidden_to_flat(h: torch.Tensor, target_dtype=torch.bfloat16) -> torch.Tensor:

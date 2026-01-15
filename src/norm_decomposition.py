@@ -16,7 +16,7 @@ from loguru import logger
 from tqdm import tqdm
 
 
-def step_length():
+def norm_decomposition():
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--model",
@@ -44,7 +44,7 @@ def step_length():
     args = parser.parse_args()
 
     os.makedirs("logs", exist_ok=True)
-    logger.add("logs/step_length.log")
+    logger.add("logs/norm_decomposition.log")
     logger.info(f"args: {args}")
     set_seed(args.seed)
     
@@ -55,7 +55,7 @@ def step_length():
         else list(MODEL_LAYERS.items())
     )
     
-    logger.info(f"Starting step length measurement...")
+    logger.info(f"Starting norm decomposition measurement...")
     logger.info(f"Models to process: {[model_name for model_name, _ in models_to_process]}")
     device = "cuda"
     dtype = torch.float32
@@ -63,7 +63,7 @@ def step_length():
     for model_full_name, max_layers in models_to_process:
         logger.info(f"Processing model: {model_full_name}")
         model_name = get_model_name_for_path(model_full_name)
-        os.makedirs(f"assets/step_length/{model_name}", exist_ok=True)
+        os.makedirs(f"assets/norm_decomposition/{model_name}", exist_ok=True)
         
         logger.info(f"Loading model: {model_full_name}")
         model = transformers.AutoModelForCausalLM.from_pretrained(
@@ -129,7 +129,7 @@ def step_length():
             vector_dim = concept_vectors.shape[1]
 
             # Generate and save a random vector for this concept (reuse if exists)
-            random_vector_dir = f"assets/step_length/{model_name}/random_vectors"
+            random_vector_dir = f"assets/norm_decomposition/{model_name}/random_vectors"
             os.makedirs(random_vector_dir, exist_ok=True)
             random_vector_path = f"{random_vector_dir}/{concept_category_name}.pt"
 
@@ -162,7 +162,7 @@ def step_length():
 
                 for layer_idx in tqdm(
                     layers_to_run,
-                    desc=f"Measuring step length ({concept_category_name}, {vector_type})",
+                    desc=f"Measuring norm decomposition ({concept_category_name}, {vector_type})",
                 ):
                     if vector_type == "concept":
                         # Use the concept vector from the corresponding layer
@@ -186,7 +186,7 @@ def step_length():
                     results[layer_idx] = layer_results
 
                 # Save results
-                save_path = f"assets/step_length/{model_name}/norm_decomposition_{concept_category_name}_{vector_type}.pt"
+                save_path = f"assets/norm_decomposition/{model_name}/norm_decomposition_{concept_category_name}_{vector_type}.pt"
                 torch.save(
                     {
                         "model": model_full_name,
@@ -272,17 +272,22 @@ def compute_norm_decomposition(
             device=device,
         )
 
-    # Normalize steering vector for projection computations
-    steering_vec_bf16 = steering_vector.to(dtype=torch.bfloat16, device=device)
-    steering_vec_normalized = steering_vec_bf16 / steering_vec_bf16.norm()
+    # Normalize steering vector for projection computations (use float32)
+    steering_vec_f32 = steering_vector.to(dtype=torch.float32, device=device)
+    steering_vec_normalized = steering_vec_f32 / steering_vec_f32.norm()
 
     # Get baseline hidden state (alpha = 0)
     h0 = hidden_to_flat(_run_with_alpha(0.0))  # [batch*seq, d]
+    h0 = h0.to(dtype=torch.float32)  # Ensure float32
+    h0_f64 = h0.to(dtype=torch.float64)  # Pre-compute float64 version for subtraction
     h0_norms = torch.norm(h0, p=2, dim=1)  # [batch*seq]
     h0_norm_mean = h0_norms.mean().item()
     h0_norm_std = h0_norms.std().item()
 
     alpha_list = []
+    # h(α) norm statistics
+    h_alpha_norm_list = []
+    h_alpha_norm_std_list = []
     # residual_A = h(α) - αv (no intercept, checking if h passes through origin)
     total_norm_A_list = []
     total_norm_A_std_list = []
@@ -301,12 +306,21 @@ def compute_norm_decomposition(
     for alpha in tqdm(alphas, desc=f"  Layer {layer_idx}", leave=False):
         # Get hidden state with steering
         h_alpha = hidden_to_flat(_run_with_alpha(alpha))  # [batch*seq, d]
+        h_alpha = h_alpha.to(dtype=torch.float32)  # Ensure float32
         
-        # Compute steering contribution
-        steering_contribution = alpha * steering_vec_bf16.unsqueeze(0)  # [1, d]
+        # Compute h(α) norm statistics
+        h_alpha_norms = torch.norm(h_alpha, p=2, dim=1)  # [batch*seq]
+        h_alpha_norm_mean = h_alpha_norms.mean().item()
+        h_alpha_norm_std = h_alpha_norms.std().item()
+        
+        # Compute steering contribution (float32)
+        steering_contribution = alpha * steering_vec_f32.unsqueeze(0)  # [1, d]
         
         # ===== Residual A: h(α) - αv (no intercept) =====
-        residual_A = h_alpha - steering_contribution  # [batch*seq, d]
+        # Use double precision for subtraction to minimize numerical errors
+        h_alpha_f64 = h_alpha.to(dtype=torch.float64)
+        steering_contribution_f64 = steering_contribution.to(dtype=torch.float64)
+        residual_A = (h_alpha_f64 - steering_contribution_f64).to(dtype=torch.float32)  # [batch*seq, d]
         
         # Project residual_A onto steering direction
         dot_A = torch.matmul(residual_A, steering_vec_normalized)  # [batch*seq]
@@ -326,8 +340,11 @@ def compute_norm_decomposition(
         ortho_norm_A_std = ortho_norm_A_per_token.std().item()
         
         # ===== Residual B: (h(α) - h(0)) - αv (with intercept) =====
-        hs_diff = h_alpha - h0  # [batch*seq, d]
-        residual_B = hs_diff - steering_contribution  # [batch*seq, d]
+        # Use double precision for subtraction to minimize numerical errors
+        hs_diff = (h_alpha_f64 - h0_f64).to(dtype=torch.float32)  # [batch*seq, d]
+        hs_diff_f64 = hs_diff.to(dtype=torch.float64)
+        residual_B = (hs_diff_f64 - steering_contribution_f64).to(dtype=torch.float32)  # [batch*seq, d]
+        
         
         # Project residual_B onto steering direction
         dot_B = torch.matmul(residual_B, steering_vec_normalized)  # [batch*seq]
@@ -347,6 +364,8 @@ def compute_norm_decomposition(
         ortho_norm_B_std = ortho_norm_B_per_token.std().item()
         
         alpha_list.append(alpha)
+        h_alpha_norm_list.append(h_alpha_norm_mean)
+        h_alpha_norm_std_list.append(h_alpha_norm_std)
         total_norm_A_list.append(total_norm_A)
         total_norm_A_std_list.append(total_norm_A_std)
         parallel_norm_A_list.append(parallel_norm_A)
@@ -362,6 +381,9 @@ def compute_norm_decomposition(
 
     return {
         "alpha": torch.tensor(alpha_list, dtype=torch.float32),
+        # h(α) norm statistics
+        "h_alpha_norm": torch.tensor(h_alpha_norm_list, dtype=torch.float32),
+        "h_alpha_norm_std": torch.tensor(h_alpha_norm_std_list, dtype=torch.float32),
         # Residual A: h(α) - αv (no intercept)
         "total_norm_A": torch.tensor(total_norm_A_list, dtype=torch.float32),
         "total_norm_A_std": torch.tensor(total_norm_A_std_list, dtype=torch.float32),
@@ -384,4 +406,4 @@ def compute_norm_decomposition(
 
 
 if __name__ == "__main__":
-    step_length()
+    norm_decomposition()

@@ -1,5 +1,5 @@
-# velocity_direction.py
-# Compute cos(v(α), v(α-ε)) to see if velocity direction is changing
+# trajectory_smoothness.py
+# Compute trajectory smoothness by analyzing velocity direction consistency
 # where v(α) = h(α) - h(α-ε) is the "velocity" at alpha
 
 import argparse
@@ -20,7 +20,7 @@ from loguru import logger
 from tqdm import tqdm
 
 
-def velocity_direction():
+def trajectory_smoothness():
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--model",
@@ -51,7 +51,7 @@ def velocity_direction():
     args = parser.parse_args()
 
     os.makedirs("logs", exist_ok=True)
-    logger.add("logs/velocity_direction.log")
+    logger.add("logs/trajectory_smoothness.log")
     logger.info(f"args: {args}")
     set_seed(args.seed)
     
@@ -62,7 +62,7 @@ def velocity_direction():
         else list(MODEL_LAYERS.items())
     )
     
-    logger.info(f"Starting velocity direction measurement...")
+    logger.info(f"Starting trajectory smoothness measurement...")
     logger.info(f"Models to process: {[model_name for model_name, _ in models_to_process]}")
     device = "cuda"
     dtype = torch.bfloat16
@@ -70,7 +70,7 @@ def velocity_direction():
     for model_full_name, max_layers in models_to_process:
         logger.info(f"Processing model: {model_full_name}")
         model_name = get_model_name_for_path(model_full_name)
-        os.makedirs(f"assets/velocity_direction/{model_name}", exist_ok=True)
+        os.makedirs(f"assets/trajectory_smoothness/{model_name}", exist_ok=True)
         
         logger.info(f"Loading model: {model_full_name}")
         model = transformers.AutoModelForCausalLM.from_pretrained(
@@ -135,7 +135,7 @@ def velocity_direction():
             vector_dim = concept_vectors.shape[1]
 
             # Generate and save a random vector for this concept (reuse if exists)
-            random_vector_dir = f"assets/velocity_direction/{model_name}/random_vectors"
+            random_vector_dir = f"assets/trajectory_smoothness/{model_name}/random_vectors"
             os.makedirs(random_vector_dir, exist_ok=True)
             random_vector_path = f"{random_vector_dir}/{concept_category_name}.pt"
 
@@ -168,7 +168,7 @@ def velocity_direction():
 
                 for layer_idx in tqdm(
                     layers_to_run,
-                    desc=f"Measuring velocity direction ({concept_category_name}, {vector_type})",
+                    desc=f"Measuring trajectory smoothness ({concept_category_name}, {vector_type})",
                 ):
                     if vector_type == "concept":
                         steering_vector = concept_vectors[layer_idx, :]
@@ -193,7 +193,7 @@ def velocity_direction():
                     results[layer_idx] = layer_results
 
                 # Save results
-                save_path = f"assets/velocity_direction/{model_name}/velocity_direction_{concept_category_name}_{vector_type}.pt"
+                save_path = f"assets/trajectory_smoothness/{model_name}/trajectory_smoothness_{concept_category_name}_{vector_type}.pt"
                 torch.save(
                     {
                         "model": model_full_name,
@@ -209,7 +209,7 @@ def velocity_direction():
                     },
                     save_path,
                 )
-                logger.info(f"Saved velocity direction ({vector_type}) to {save_path}")
+                logger.info(f"Saved trajectory smoothness ({vector_type}) to {save_path}")
         
         # Clean up model to free memory before next model
         del model
@@ -298,8 +298,10 @@ def compute_velocity_direction(
     # Compute velocity direction consistency for each alpha
     alpha_out = []
     eps_out = []
-    cos_velocity_list = []
-    cos_velocity_std_list = []
+    cos_velocity_raw_list = []
+    cos_velocity_raw_std_list = []
+    cos_velocity_removed_list = []
+    cos_velocity_removed_std_list = []
     cos_x0_x1_list = []
     cos_x0_x1_std_list = []
     cos_x1_x2_list = []
@@ -321,14 +323,23 @@ def compute_velocity_direction(
         # x2 = h(alpha - 2*eps)
         x2 = hidden_to_flat(_run_with_alpha(alpha - 2.0 * eps))  # [batch*seq, d]
         
-        # Compute velocities
-        # v_forward(α) = h(α) - h(α-ε)
-        v_forward = x0 - x1 - eps * steering_vector.unsqueeze(0).expand_as(x0) # [batch*seq, d]
-        # v_backward(α) = h(α-ε) - h(α-2ε)
-        v_backward = x1 - x2 - eps * steering_vector.unsqueeze(0).expand_as(x1)  # [batch*seq, d]
+        # Compute velocities - two versions:
+        # 1. Raw velocities (without removing steering)
+        v_forward_raw = x0 - x1  # [batch*seq, d]
+        v_backward_raw = x1 - x2  # [batch*seq, d]
         
-        # Compute cosine similarity between the two velocity vectors
-        cos_v_mean, cos_v_std = _cosine_similarity_batch(v_forward, v_backward)
+        # 2. Velocities with steering removed
+        # v_forward(α) = h(α) - h(α-ε) - ε*v (remove steering contribution)
+        steering_vec_device = steering_vector.to(device=x0.device, dtype=x0.dtype)
+        v_forward_removed = x0 - x1 - eps * steering_vec_device.unsqueeze(0).expand_as(x0) # [batch*seq, d]
+        # v_backward(α) = h(α-ε) - h(α-2ε) - ε*v (remove steering contribution)
+        v_backward_removed = x1 - x2 - eps * steering_vec_device.unsqueeze(0).expand_as(x1)  # [batch*seq, d]
+        
+        # Compute cosine similarity between velocity vectors
+        # Raw velocities (without removing steering)
+        cos_v_raw_mean, cos_v_raw_std = _cosine_similarity_batch(v_forward_raw, v_backward_raw)
+        # Velocities with steering removed
+        cos_v_removed_mean, cos_v_removed_std = _cosine_similarity_batch(v_forward_removed, v_backward_removed)
         
         # Compute cosine similarity between hidden states
         # cos(x0, x1): similarity between h(α) and h(α-ε)
@@ -338,8 +349,10 @@ def compute_velocity_direction(
         
         alpha_out.append(alpha)
         eps_out.append(eps)
-        cos_velocity_list.append(cos_v_mean)
-        cos_velocity_std_list.append(cos_v_std)
+        cos_velocity_raw_list.append(cos_v_raw_mean)
+        cos_velocity_raw_std_list.append(cos_v_raw_std)
+        cos_velocity_removed_list.append(cos_v_removed_mean)
+        cos_velocity_removed_std_list.append(cos_v_removed_std)
         cos_x0_x1_list.append(cos_x0_x1_mean)
         cos_x0_x1_std_list.append(cos_x0_x1_std)
         cos_x1_x2_list.append(cos_x1_x2_mean)
@@ -348,8 +361,10 @@ def compute_velocity_direction(
     return {
         "alpha": torch.tensor(alpha_out, dtype=torch.float32),
         "eps": torch.tensor(eps_out, dtype=torch.float32),
-        "cos_velocity": torch.tensor(cos_velocity_list, dtype=torch.float32),
-        "cos_velocity_std": torch.tensor(cos_velocity_std_list, dtype=torch.float32),
+        "cos_velocity_raw": torch.tensor(cos_velocity_raw_list, dtype=torch.float32),
+        "cos_velocity_raw_std": torch.tensor(cos_velocity_raw_std_list, dtype=torch.float32),
+        "cos_velocity_removed": torch.tensor(cos_velocity_removed_list, dtype=torch.float32),
+        "cos_velocity_removed_std": torch.tensor(cos_velocity_removed_std_list, dtype=torch.float32),
         "cos_x0_x1": torch.tensor(cos_x0_x1_list, dtype=torch.float32),
         "cos_x0_x1_std": torch.tensor(cos_x0_x1_std_list, dtype=torch.float32),
         "cos_x1_x2": torch.tensor(cos_x1_x2_list, dtype=torch.float32),
@@ -359,4 +374,4 @@ def compute_velocity_direction(
 
 
 if __name__ == "__main__":
-    velocity_direction()
+    trajectory_smoothness()
