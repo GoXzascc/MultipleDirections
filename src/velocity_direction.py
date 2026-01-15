@@ -11,6 +11,9 @@ from utils import (
     CONCEPT_CATEGORIES,
     set_seed,
     _get_layers_container,
+    run_model_with_steering,
+    hidden_to_flat,
+    get_model_name_for_path,
 )
 from extract_concepts import load_concept_datasets
 from loguru import logger
@@ -31,7 +34,7 @@ def velocity_direction():
     logger.add("logs/velocity_direction.log")
     logger.info(f"args: {args}")
     set_seed(args.seed)
-    model_name = args.model.split("/")[-1]
+    model_name = get_model_name_for_path(args.model)
     os.makedirs(f"assets/velocity_direction/{model_name}", exist_ok=True)
     logger.info(f"Starting velocity direction measurement...")
     logger.info(f"Loading model: {args.model}")
@@ -166,43 +169,16 @@ def compute_velocity_direction(
         steps=int(alpha_points),
     ).tolist()
 
-    layers_container = _get_layers_container(model)
-    target_layer_module = layers_container[layer_idx]
-    last_layer_module = layers_container[len(layers_container) - 1]
-
     def _run_with_alpha(alpha_value: float) -> torch.Tensor:
         """Run model with steering and capture last layer hidden states."""
-        captured: dict[str, torch.Tensor] = {}
-
-        def _last_layer_forward_hook(_module, _inputs, output):
-            hidden = output[0] if isinstance(output, tuple) else output
-            captured["h"] = hidden.detach()
-            return output
-
-        def _steer_hook(_module, _inputs, output):
-            if isinstance(output, tuple):
-                hidden = output[0]
-                vec = steering_vector.to(device=hidden.device, dtype=hidden.dtype)
-                hidden = hidden + (alpha_value * vec)
-                return (hidden,) + output[1:]
-            vec = steering_vector.to(device=output.device, dtype=output.dtype)
-            return output + (alpha_value * vec)
-
-        last_handle = last_layer_module.register_forward_hook(_last_layer_forward_hook)
-        steer_handle = target_layer_module.register_forward_hook(_steer_hook)
-        _ = model(input_ids, output_hidden_states=True)
-        steer_handle.remove()
-        last_handle.remove()
-
-        h = captured.get("h", None)
-        if h is None:
-            raise RuntimeError("Failed to capture hidden states")
-        return h
-
-    def _hidden_to_flat(h: torch.Tensor) -> torch.Tensor:
-        """Flatten hidden states: [batch, seq, d] -> [batch*seq, d]"""
-        hs_dim = h.shape[-1]
-        return h.reshape(-1, hs_dim).to(torch.bfloat16)
+        return run_model_with_steering(
+            model=model,
+            input_ids=input_ids,
+            steering_vector=steering_vector,
+            layer_idx=layer_idx,
+            alpha_value=alpha_value,
+            device=device,
+        )
 
     def _cosine_similarity_batch(a: torch.Tensor, b: torch.Tensor) -> float:
         """Compute average cosine similarity between batch of vectors.
@@ -222,7 +198,7 @@ def compute_velocity_direction(
     # Compute h(α) for all alpha values first
     h_list = []
     for alpha in tqdm(alphas, desc=f"  Layer {layer_idx} (collecting h)", leave=False):
-        h_alpha = _hidden_to_flat(_run_with_alpha(alpha))
+        h_alpha = hidden_to_flat(_run_with_alpha(alpha))
         h_list.append(h_alpha)
 
     # Compute velocity: v(α_i) = h(α_i) - h(α_{i-1})

@@ -4,6 +4,7 @@ import argparse
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
+from utils import get_model_name_for_path
 
 # Set publication-quality style
 plt.rcParams['font.family'] = 'serif'
@@ -628,7 +629,7 @@ def main():
 
     # Determine which models to plot
     if args.model:
-        models_to_plot = {args.model: args.model.split("/")[-1]}
+        models_to_plot = {args.model: get_model_name_for_path(args.model)}
     else:
         models_to_plot = find_all_models()
         if not models_to_plot:
@@ -668,7 +669,7 @@ def main():
                 print(f"    ... and {len(concept_files_random) - 3} more")
         
         if concept_files_concept or concept_files_random:
-            model_short = model_name.split("/")[-1]
+            model_short = get_model_name_for_path(model_name)
             
             if args.compact:
                 output_filename = f"direction_change_compact_{model_short}.pdf"

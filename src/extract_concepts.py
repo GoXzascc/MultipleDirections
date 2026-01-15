@@ -8,7 +8,7 @@ import gc
 from tqdm import tqdm
 from loguru import logger
 
-from utils import MODEL_LAYERS, CONCEPT_CATEGORIES
+from utils import MODEL_LAYERS, CONCEPT_CATEGORIES, get_model_name_for_path
 
 
 def _load_separate_files_dataset(
@@ -284,7 +284,7 @@ def obtain_concept_vector(
         concept_category_name: Name of the concept category
         concept_category_config: Configuration dictionary for the concept category
         max_dataset_size: Maximum size of the dataset to use
-        model_name: Name of the model
+        model_name: Name of the model (full name, e.g., "google/gemma-2-2b")
         methods: Method to use for obtaining concept vectors
     
     Returns:
@@ -295,9 +295,10 @@ def obtain_concept_vector(
         concept_category_name, concept_category_config
     )
     
-    # Set up save path
-    os.makedirs(f"assets/concept_vectors/{model_name}", exist_ok=True)
-    save_path = f"assets/concept_vectors/{model_name}/{concept_category_name}.pt"
+    # Set up save path with safe model name
+    safe_model_name = get_model_name_for_path(model_name)
+    os.makedirs(f"assets/concept_vectors/{safe_model_name}", exist_ok=True)
+    save_path = f"assets/concept_vectors/{safe_model_name}/{concept_category_name}.pt"
 
     # Get concept vectors
     concept_vector = get_concept_vectors(

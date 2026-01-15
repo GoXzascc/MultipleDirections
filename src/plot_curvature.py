@@ -4,6 +4,7 @@ import argparse
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
+from utils import get_model_name_for_path
 
 # Set publication-quality style
 plt.rcParams['font.family'] = 'serif'
@@ -314,7 +315,7 @@ def main():
     # Determine which models to plot
     if args.model:
         # Plot specific model
-        models_to_plot = {args.model: args.model.split("/")[-1]}
+        models_to_plot = {args.model: get_model_name_for_path(args.model)}
     else:
         # Plot all detected models
         models_to_plot = find_all_models()
@@ -368,7 +369,7 @@ def main():
             
             if concept_files_concept or concept_files_random:
                 # Create output filename
-                model_short = model_name.split("/")[-1]
+                model_short = get_model_name_for_path(model_name)
                 output_filename = f"all_layers_all_concepts_{model_short}_{remove_type}.pdf"
                 output_path = None if args.show else os.path.join(args.outdir, output_filename)
                 

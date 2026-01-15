@@ -4,6 +4,7 @@ import argparse
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
+from utils import get_model_name_for_path
 
 # Set publication-quality style
 plt.rcParams['font.family'] = 'serif'
@@ -267,7 +268,7 @@ def main():
     save = (not args.show)
 
     if args.model:
-        models_to_plot = {args.model: args.model.split("/")[-1]}
+        models_to_plot = {args.model: get_model_name_for_path(args.model)}
     else:
         models_to_plot = find_all_models()
         if not models_to_plot:
@@ -294,7 +295,7 @@ def main():
         if concept_files_random:
             print(f"  Found {len(concept_files_random)} random vector files")
         
-        model_short = model_name.split("/")[-1]
+        model_short = get_model_name_for_path(model_name)
         output_filename = f"velocity_direction_{model_short}.pdf"
         output_path = None if args.show else os.path.join(args.outdir, output_filename)
         

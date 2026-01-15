@@ -5,11 +5,11 @@ import numpy as np
 
 MODEL_LAYERS = {
     "Qwen/Qwen3-1.7B": 28,
-    "Qwen/Qwen3-14B": 40,
+    # "Qwen/Qwen3-14B": 40,
     "EleutherAI/pythia-70m": 6,
     "EleutherAI/pythia-160m": 12,
     "google/gemma-2-2b": 26,
-    "google/gemma-2-9b": 42,
+    # "google/gemma-2-9b": 42,
 }
 
 CONCEPT_CATEGORIES = {
@@ -76,6 +76,20 @@ def seed_from_name(name: str) -> int:
     return int(h, 16) % (2**31)
 
 
+def get_model_name_for_path(model_name: str) -> str:
+    """
+    Extract a safe model name for use in file paths.
+    Handles model names with slashes (e.g., "google/gemma-2-2b" -> "gemma-2-2b").
+    
+    Args:
+        model_name: Full model name (e.g., "google/gemma-2-2b")
+    
+    Returns:
+        Safe name for file paths (e.g., "gemma-2-2b")
+    """
+    return model_name.split("/")[-1]
+
+
 def _get_layers_container(hf_model):
     """used to get the layers container of the model
     Args:
@@ -98,5 +112,74 @@ def _get_layers_container(hf_model):
         if layers is not None:
             return layers
     raise AttributeError("Unable to locate transformer layers container on model")
+
+
+def run_model_with_steering(
+    model,
+    input_ids,
+    steering_vector: torch.Tensor,
+    layer_idx: int,
+    alpha_value: float,
+    device,
+) -> torch.Tensor:
+    """
+    Run model with steering applied at a specific layer and capture last layer hidden states.
+    
+    Args:
+        model: The transformer model
+        input_ids: Input token IDs
+        steering_vector: The vector to add at the specified layer
+        layer_idx: Which layer to apply steering at
+        alpha_value: The scaling factor for steering (alpha * steering_vector)
+        device: Device to run on
+    
+    Returns:
+        Hidden states from the last layer [batch, seq, d]
+    """
+    layers_container = _get_layers_container(model)
+    target_layer_module = layers_container[layer_idx]
+    last_layer_module = layers_container[len(layers_container) - 1]
+    
+    captured: dict[str, torch.Tensor] = {}
+
+    def _last_layer_forward_hook(_module, _inputs, output):
+        hidden = output[0] if isinstance(output, tuple) else output
+        captured["h"] = hidden.detach()
+        return output
+
+    def _steer_hook(_module, _inputs, output):
+        if isinstance(output, tuple):
+            hidden = output[0]
+            vec = steering_vector.to(device=hidden.device, dtype=hidden.dtype)
+            hidden = hidden + (alpha_value * vec)
+            return (hidden,) + output[1:]
+        vec = steering_vector.to(device=output.device, dtype=output.dtype)
+        return output + (alpha_value * vec)
+
+    last_handle = last_layer_module.register_forward_hook(_last_layer_forward_hook)
+    steer_handle = target_layer_module.register_forward_hook(_steer_hook)
+    _ = model(input_ids, output_hidden_states=True)
+    steer_handle.remove()
+    last_handle.remove()
+
+    h = captured.get("h", None)
+    if h is None:
+        raise RuntimeError("Failed to capture hidden states")
+    return h
+
+
+def hidden_to_flat(h: torch.Tensor, target_dtype=torch.bfloat16) -> torch.Tensor:
+    """
+    Flatten hidden states from [batch, seq, d] to [batch*seq, d].
+    
+    Args:
+        h: Hidden states tensor of shape [batch, seq, d]
+        target_dtype: Target dtype for the output (default: bfloat16)
+    
+    Returns:
+        Flattened tensor of shape [batch*seq, d]
+    """
+    hs_dim = h.shape[-1]
+    return h.reshape(-1, hs_dim).to(target_dtype)
 
 

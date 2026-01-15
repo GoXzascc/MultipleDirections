@@ -8,6 +8,9 @@ from utils import (
     CONCEPT_CATEGORIES,
     set_seed,
     _get_layers_container,
+    run_model_with_steering,
+    hidden_to_flat,
+    get_model_name_for_path,
 )
 from extract_concepts import load_concept_datasets
 from loguru import logger
@@ -28,7 +31,7 @@ def step_length():
     logger.add("logs/step_length.log")
     logger.info(f"args: {args}")
     set_seed(args.seed)
-    model_name = args.model.split("/")[-1]
+    model_name = get_model_name_for_path(args.model)
     os.makedirs(f"assets/step_length/{model_name}", exist_ok=True)
     logger.info(f"Starting step length measurement...")
     logger.info(f"Loading model: {args.model}")
@@ -182,52 +185,23 @@ def compute_norm_decomposition(
         steps=int(alpha_points),
     ).tolist()
 
-    layers_container = _get_layers_container(model)
-    target_layer_module = layers_container[layer_idx]
-    last_layer_module = layers_container[len(layers_container) - 1]
-
     def _run_with_alpha(alpha_value: float) -> torch.Tensor:
         """Run model with steering and capture last layer hidden states."""
-        captured: dict[str, torch.Tensor] = {}
-
-        def _last_layer_forward_hook(_module, _inputs, output):
-            hidden = output[0] if isinstance(output, tuple) else output
-            captured["h"] = hidden.detach()
-            return output
-
-        def _steer_hook(_module, _inputs, output):
-            if isinstance(output, tuple):
-                hidden = output[0]
-                vec = steering_vector.to(device=hidden.device, dtype=hidden.dtype)
-                hidden = hidden + (alpha_value * vec)
-                return (hidden,) + output[1:]
-            vec = steering_vector.to(device=output.device, dtype=output.dtype)
-            return output + (alpha_value * vec)
-
-        last_handle = last_layer_module.register_forward_hook(_last_layer_forward_hook)
-        steer_handle = target_layer_module.register_forward_hook(_steer_hook)
-        _ = model(input_ids, output_hidden_states=True)
-        steer_handle.remove()
-        last_handle.remove()
-
-        h = captured.get("h", None)
-        if h is None:
-            raise RuntimeError(
-                "Failed to capture hidden states for norm computation"
-            )
-        return h
-
-    def _hidden_to_flat(h: torch.Tensor) -> torch.Tensor:
-        """Flatten hidden states: [batch, seq, d] -> [batch*seq, d]"""
-        hs_dim = h.shape[-1]
-        return h.reshape(-1, hs_dim).to(torch.bfloat16)
+        return run_model_with_steering(
+            model=model,
+            input_ids=input_ids,
+            steering_vector=steering_vector,
+            layer_idx=layer_idx,
+            alpha_value=alpha_value,
+            device=device,
+        )
 
     # Normalize steering vector for projection computations
     steering_vec_bf16 = steering_vector.to(dtype=torch.bfloat16, device=device)
     steering_vec_normalized = steering_vec_bf16 / steering_vec_bf16.norm()
 
     # Get baseline hidden state (alpha = 0)
-    h0 = _hidden_to_flat(_run_with_alpha(0.0))  # [batch*seq, d]
+    h0 = hidden_to_flat(_run_with_alpha(0.0))  # [batch*seq, d]
     h0_norm = torch.norm(h0, p=2, dim=1).mean().item()  # average per-token norm
 
     alpha_list = []
@@ -242,7 +216,7 @@ def compute_norm_decomposition(
 
     for alpha in tqdm(alphas, desc=f"  Layer {layer_idx}", leave=False):
         # Get hidden state with steering
-        h_alpha = _hidden_to_flat(_run_with_alpha(alpha))  # [batch*seq, d]
+        h_alpha = hidden_to_flat(_run_with_alpha(alpha))  # [batch*seq, d]
         
         # Compute steering contribution
         steering_contribution = alpha * steering_vec_bf16.unsqueeze(0)  # [1, d]
