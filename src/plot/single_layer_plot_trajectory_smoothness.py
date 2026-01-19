@@ -1,3 +1,4 @@
+# single_layer_plot_trajectory_smoothness.py
 import os
 import sys
 import argparse
@@ -33,15 +34,15 @@ def _to_np(x):
     return np.asarray(x)
 
 
-def load_norm_pt(path: str):
+def load_trajectory_smoothness_pt(path: str):
     obj = torch.load(path, map_location="cpu")
     if "results" not in obj:
         raise ValueError(f"Expected key 'results' in {path}, got keys: {list(obj.keys())}")
     return obj
 
 
-def find_all_models(base_dir="assets/norm_decomposition"):
-    """Find all models that have norm decomposition files."""
+def find_all_models(base_dir="assets/trajectory_smoothness"):
+    """Find all models that have trajectory smoothness files."""
     models = {}
     if not os.path.exists(base_dir):
         return models
@@ -49,56 +50,56 @@ def find_all_models(base_dir="assets/norm_decomposition"):
     for item in os.listdir(base_dir):
         item_path = os.path.join(base_dir, item)
         if os.path.isdir(item_path):
-            files = [f for f in os.listdir(item_path) if f.startswith("norm_decomposition_") and f.endswith(".pt")]
+            files = [f for f in os.listdir(item_path) if f.startswith("trajectory_smoothness_") and f.endswith(".pt")]
             if files:
                 try:
                     first_file = os.path.join(item_path, files[0])
-                    obj = load_norm_pt(first_file)
+                    obj = load_trajectory_smoothness_pt(first_file)
                     file_model = obj.get("model", item)
-                    models[file_model] = item  # Map model name to directory name
+                    models[file_model] = item
                 except:
                     models[item] = item
     return models
 
 
-def find_norm_files_by_model(model_name: str, base_dir="assets/norm_decomposition", vector_type: str = None):
-    """Find all norm_decomposition_*.pt files for a specific model."""
+def find_trajectory_smoothness_files_by_model(model_name: str, base_dir="assets/trajectory_smoothness", vector_type: str = None):
+    """Find all trajectory_smoothness_*.pt files for a specific model."""
     model_dir = os.path.join(base_dir, model_name)
-    norm_files = []
+    files = []
     
     if os.path.exists(model_dir) and os.path.isdir(model_dir):
         for file in os.listdir(model_dir):
-            if file.startswith("norm_decomposition_") and file.endswith(".pt"):
+            if file.startswith("trajectory_smoothness_") and file.endswith(".pt"):
                 if vector_type is not None and f"_{vector_type}" not in file:
                     continue
-                norm_files.append(os.path.join(model_dir, file))
+                files.append(os.path.join(model_dir, file))
     
-    if not norm_files and '/' in model_name:
+    if not files and '/' in model_name:
         short_name = model_name.split('/')[-1]
         model_dir = os.path.join(base_dir, short_name)
         if os.path.exists(model_dir) and os.path.isdir(model_dir):
             for file in os.listdir(model_dir):
-                if file.startswith("norm_decomposition_") and file.endswith(".pt"):
+                if file.startswith("trajectory_smoothness_") and file.endswith(".pt"):
                     if vector_type is not None and f"_{vector_type}" not in file:
                         continue
-                    norm_files.append(os.path.join(model_dir, file))
+                    files.append(os.path.join(model_dir, file))
     
-    if not norm_files:
+    if not files:
         if os.path.exists(base_dir):
-            for root, dirs, files in os.walk(base_dir):
-                for file in files:
-                    if file.startswith("norm_decomposition_") and file.endswith(".pt"):
+            for root, dirs, file_list in os.walk(base_dir):
+                for file in file_list:
+                    if file.startswith("trajectory_smoothness_") and file.endswith(".pt"):
                         if vector_type is not None and f"_{vector_type}" not in file:
                             continue
                         file_path = os.path.join(root, file)
                         try:
-                            obj = load_norm_pt(file_path)
+                            obj = load_trajectory_smoothness_pt(file_path)
                             file_model = obj.get("model", "")
                             if file_model == model_name or file_model.split('/')[-1] == model_name.split('/')[-1]:
-                                norm_files.append(file_path)
+                                files.append(file_path)
                         except:
                             pass
-    return sorted(norm_files)
+    return sorted(files)
 
 
 def plot_single_layer_comparison(
@@ -110,12 +111,12 @@ def plot_single_layer_comparison(
     # Load concept vector files
     concept_data_concept = {}
     for file_path in concept_files_concept:
-        obj = load_norm_pt(file_path)
+        obj = load_trajectory_smoothness_pt(file_path)
         concept_name = obj.get("concept_category", None)
         if concept_name is None:
             filename = os.path.basename(file_path)
-            if filename.startswith("norm_decomposition_") and filename.endswith(".pt"):
-                name_part = filename[len("norm_decomposition_"):-3]
+            if filename.startswith("trajectory_smoothness_") and filename.endswith(".pt"):
+                name_part = filename[len("trajectory_smoothness_"):-3]
                 for suffix in ["_concept", "_random"]:
                     if name_part.endswith(suffix):
                         name_part = name_part[:-len(suffix)]
@@ -127,12 +128,12 @@ def plot_single_layer_comparison(
     # Load random vector files
     concept_data_random = {}
     for file_path in concept_files_random:
-        obj = load_norm_pt(file_path)
+        obj = load_trajectory_smoothness_pt(file_path)
         concept_name = obj.get("concept_category", None)
         if concept_name is None:
             filename = os.path.basename(file_path)
-            if filename.startswith("norm_decomposition_") and filename.endswith(".pt"):
-                name_part = filename[len("norm_decomposition_"):-3]
+            if filename.startswith("trajectory_smoothness_") and filename.endswith(".pt"):
+                name_part = filename[len("trajectory_smoothness_"):-3]
                 for suffix in ["_concept", "_random"]:
                     if name_part.endswith(suffix):
                         name_part = name_part[:-len(suffix)]
@@ -174,77 +175,100 @@ def plot_single_layer_comparison(
     for i, concept in enumerate(sorted(all_concepts)):
         concept_colors[concept] = colors.get(concept, color_list[i % len(color_list)])
 
-    # Create single figure for both decompositions (1 row x 4 cols)
-    fig, axes = plt.subplots(1, 4, figsize=(20, 4.5), dpi=300)
+    # Check if we have new format data (with _raw and _removed) or old format (just cos_velocity)
+    # Check first concept's first layer
+    first_concept = list(all_concepts)[0]
+    sample_data_source = concept_data_concept if first_concept in concept_data_concept else concept_data_random
+    sample_results = sample_data_source[first_concept][middle_layer]
+    has_new_format = 'cos_velocity_raw' in sample_results and 'cos_velocity_removed' in sample_results
     
-    decompositions = [
-        (0, ['parallel_norm_A', 'ortho_norm_A'], r"Decomposition A: $\phi(\alpha)$"),
-        (2, ['parallel_norm_B', 'ortho_norm_B'], r"Decomposition B: $\phi(\alpha) - \phi(0)$"),
-    ]
-
-    for col_offset, norm_types, decomp_label in decompositions:
-        # col_offset = Concept, col_offset + 1 = Random
+    if has_new_format:
+        # New format: show raw vs removed for concept vs random (1 row x 4 cols)
+        fig, axes = plt.subplots(1, 4, figsize=(24, 5), dpi=300)
         
-        data_sources = [
-            (axes[col_offset], concept_data_concept, "Concept Directions"),
-            (axes[col_offset + 1], concept_data_random, "Random Directions")
+        plot_configs = [
+            (0, concept_data_concept, "cos_velocity_raw", "Concept Directions\n(Without Removal)"),
+            (1, concept_data_concept, "cos_velocity_removed", "Concept Directions\n(Steering Removed)"),
+            (2, concept_data_random, "cos_velocity_raw", "Random Directions\n(Without Removal)"),
+            (3, concept_data_random, "cos_velocity_removed", "Random Directions\n(Steering Removed)"),
         ]
+    else:
+        # Old format: just show concept vs random (1 row x 2 cols)
+        fig, axes_array = plt.subplots(1, 2, figsize=(14, 5), dpi=300)
+        axes = [axes_array[0], axes_array[1], None, None]  # Pad to match loop structure
         
-        for ax, data_source, title_suffix in data_sources:
-            for concept_name in sorted(all_concepts):
-                concept_color = concept_colors[concept_name]
-                if concept_name in data_source and middle_layer in data_source[concept_name]:
-                    results = data_source[concept_name][middle_layer]
+        plot_configs = [
+            (0, concept_data_concept, "cos_velocity", "Concept Directions"),
+            (1, concept_data_random, "cos_velocity", "Random Directions"),
+        ]
+    
+    for ax_idx, data_source, velocity_key, title_text in plot_configs:
+        if axes[ax_idx] is None:
+            continue
+            
+        ax = axes[ax_idx]
+        
+        for concept_name in sorted(all_concepts):
+            concept_color = concept_colors[concept_name]
+            if concept_name in data_source and middle_layer in data_source[concept_name]:
+                results = data_source[concept_name][middle_layer]
+                
+                # Check if the velocity key exists
+                if velocity_key in results:
                     alpha = _to_np(results["alpha"])
+                    mean_val = _to_np(results[velocity_key])
                     
-                    for norm_type in norm_types:
-                        if norm_type in results:
-                            norm_val = _to_np(results[norm_type])
-                            mask = np.isfinite(alpha) & np.isfinite(norm_val)
-                            
-                            # Calculate markevery
-                            n_points = len(alpha[mask])
-                            mark_freq = max(1, n_points // 10)
-
-                            if 'parallel' in norm_type:
-                                linestyle = '-'
-                                marker = 'o'
-                                linew = 3.0
-                                alp = 0.95
-                            else:
-                                linestyle = '-.'
-                                marker = '^'
-                                linew = 2.5
-                                alp = 0.85
-                            
-                            if np.any(mask):
-                                ax.plot(alpha[mask], norm_val[mask], 
-                                       color=concept_color,
-                                       linewidth=linew, 
-                                       linestyle=linestyle,
-                                       marker=marker,
-                                       markersize=8,
-                                       markevery=mark_freq,
-                                       alpha=alp)
-            
-            ax.set_xscale("log")
-            ax.set_yscale("log")
-            
-            ax.set_xlabel(r"$\alpha$", fontweight='bold', fontsize=20)
-            if col_offset == 0 and ax == axes[col_offset]:
-               ax.set_ylabel("Norm", fontweight='bold', fontsize=20)
-            elif col_offset == 2 and ax == axes[col_offset]:
-               ax.set_ylabel("Norm", fontweight='bold', fontsize=20)
-            
-            ax.tick_params(axis='both', which='major', labelsize=16)
-            
-            # Title
-            full_title = f"{decomp_label}\n{title_suffix}"
-            ax.set_title(full_title, fontweight='bold', fontsize=16)
-            
-            ax.grid(True, alpha=0.3, linestyle='--', linewidth=0.6)
-            ax.spines['top'].set_visible(False)
-            ax.spines['right'].set_visible(False)
+                    # Check for std
+                    std_key = f"{velocity_key}_std"
+                    has_std = std_key in results
+                    
+                    if has_std:
+                        std_val = _to_np(results[std_key])
+                        mask = np.isfinite(alpha) & np.isfinite(mean_val) & np.isfinite(std_val)
+                    else:
+                        mask = np.isfinite(alpha) & np.isfinite(mean_val)
+                    
+                    if np.any(mask):
+                        # Determine line style based on velocity type
+                        if "removed" in velocity_key:
+                            linestyle = '--'
+                            linewidth = 2.5
+                        else:
+                            linestyle = '-'
+                            linewidth = 3.0
+                        
+                        # Plot mean line
+                        ax.plot(alpha[mask], mean_val[mask],
+                               color=concept_color,
+                               linewidth=linewidth,
+                               linestyle=linestyle,
+                               alpha=0.9)
+                        
+                        # Plot std as shaded area if available
+                        if has_std:
+                            ax.fill_between(alpha[mask],
+                                          mean_val[mask] - std_val[mask],
+                                          mean_val[mask] + std_val[mask],
+                                          color=concept_color,
+                                          alpha=0.15)
+        
+        # Style the axis
+        ax.set_xscale("log")
+        ax.set_xlabel(r"$\alpha$", fontweight='bold', fontsize=20)
+        
+        # Only show y-label on the first subplot
+        if ax_idx == 0:
+            ax.set_ylabel(r"$\cos((\phi(\alpha) - \phi(\alpha - \epsilon)), (\phi(\alpha) - \phi(\alpha + \epsilon))$", fontweight='bold', fontsize=20)
+        ax.tick_params(axis='both', which='major', labelsize=16)
+        ax.set_title(title_text, fontweight='bold', fontsize=16)
+        ax.set_ylim(-1.05, 1.05)
+        
+        # Reference lines
+        ax.axhline(y=1.0, color='gray', linestyle='--', linewidth=0.5, alpha=0.5)
+        ax.axhline(y=0.0, color='gray', linestyle=':', linewidth=0.5, alpha=0.5)
+        ax.grid(True, alpha=0.3, linestyle='--', linewidth=0.6)
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
 
     # Common Legend
     legend_handles = []
@@ -254,14 +278,14 @@ def plot_single_layer_comparison(
         legend_handles.append(Line2D([0], [0], color=concept_colors[concept_name], linewidth=3, linestyle='-'))
     
     # Styles
-    legend_handles.append(Line2D([0], [0], color='gray', linewidth=3.0, linestyle='-', marker='o', markersize=8))
-    legend_handles.append(Line2D([0], [0], color='gray', linewidth=2.5, linestyle='-.', marker='^', markersize=8))
+    legend_handles.append(Line2D([0], [0], color='gray', linewidth=3.0, linestyle='-'))
+    legend_handles.append(Line2D([0], [0], color='gray', linewidth=2.5, linestyle='--'))
     
-    legend_labels = sorted(all_concepts) + ['Parallel Norm', 'Ortho Norm']
+    legend_labels = sorted(all_concepts)
     
     # Adjust layout to make room for legend at bottom
     plt.tight_layout()
-    plt.subplots_adjust(bottom=0.25)
+    plt.subplots_adjust(bottom=0.24)
     
     fig.legend(legend_handles, legend_labels, loc='lower center', 
               bbox_to_anchor=(0.5, 0.02), ncol=min(len(legend_handles), 4), 
@@ -270,7 +294,7 @@ def plot_single_layer_comparison(
 
     # Save
     model_short = get_model_name_for_path(model_name)
-    out_filename = f"single_layer_norm_decomposition_{model_short}_merged.pdf"
+    out_filename = f"single_layer_trajectory_smoothness_{model_short}_merged.pdf"
     out_path = os.path.join(outdir, out_filename)
     plt.savefig(out_path, dpi=300, bbox_inches='tight')
     print(f"Saved: {out_path}")
@@ -278,7 +302,7 @@ def plot_single_layer_comparison(
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Plot single layer norm decomposition")
+    ap = argparse.ArgumentParser(description="Plot single layer trajectory smoothness")
     ap.add_argument("--outdir", type=str, default="plots", help="where to save PDFs")
     ap.add_argument("--model", type=str, default=None, 
                    help="model name (e.g., 'EleutherAI/pythia-70m').")
@@ -306,8 +330,8 @@ def main():
 
     for model_name, model_dir in models_to_plot.items():
         print(f"\nProcessing {model_name}...")
-        concept_files = find_norm_files_by_model(model_name, vector_type="concept")
-        random_files = find_norm_files_by_model(model_name, vector_type="random")
+        concept_files = find_trajectory_smoothness_files_by_model(model_name, vector_type="concept")
+        random_files = find_trajectory_smoothness_files_by_model(model_name, vector_type="random")
         
         if concept_files or random_files:
             plot_single_layer_comparison(

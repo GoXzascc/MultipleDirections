@@ -441,10 +441,10 @@ def plot_all_layers_all_concepts(
                 # Style concept subplot
                 ax_concept.set_xscale("log")
                 ax_concept.set_yscale("log")
-                ax_concept.set_xlabel("Alpha", fontweight='bold', fontsize=9)
-                ax_concept.set_ylabel("Norm", fontweight='bold', fontsize=9)
-                ax_concept.set_title(f"Layer {layer_num} | {decomp_label} | Concept", 
-                                    fontweight='bold', pad=6, fontsize=10)
+                ax_concept.set_xlabel("Alpha", fontweight='bold', fontsize=20)
+                ax_concept.set_ylabel("Norm", fontweight='bold', fontsize=20)
+                # ax_concept.set_title(f"Layer {layer_num} | {decomp_label} | Concept", 
+                #                     fontweight='bold', pad=6, fontsize=10)
                 ax_concept.grid(True, alpha=0.3, linestyle='--', linewidth=0.6, axis='both')
                 ax_concept.set_axisbelow(True)
                 
