@@ -28,13 +28,12 @@ def plot_concept_norms():
     plt.style.use('seaborn-v0_8-paper')
     # Increase font sizes globally
     plt.rcParams.update({
-        'font.size': 14,
-        'axes.titlesize': 16,
-        'axes.labelsize': 14,
-        'xtick.labelsize': 12,
-        'ytick.labelsize': 12,
-        'legend.fontsize': 12,
-        'figure.titlesize': 18
+        'font.size': 24,
+        'axes.titlesize': 24,
+        'axes.labelsize': 24,
+        'xtick.labelsize': 24,
+        'ytick.labelsize': 24,
+        'legend.fontsize': 20,
     })
 
     # Define markers and colors
@@ -44,11 +43,11 @@ def plot_concept_norms():
     colors = prop_cycle.by_key()['color']
     concept_colors = {concept: colors[i % len(colors)] for i, concept in enumerate(concepts)}
 
+    concept_renames = {
+        "language_en_fr_paired": "translation",
+    }
+
     plt.figure(figsize=(12, 8))
-    
-    # Keep track of labels for legend to avoid duplicates
-    handles = []
-    labels = []
     
     for concept in concepts:
         for model in models:
@@ -61,7 +60,7 @@ def plot_concept_norms():
                 num_layers = len(norms)
                 x_axis = np.linspace(0, 100, num_layers)
                 
-                label = f"{model} - {concept}"
+                label = f"{model} - {concept_renames.get(concept, concept)}"
                 line, = plt.plot(
                     x_axis, 
                     norms, 
@@ -72,20 +71,36 @@ def plot_concept_norms():
                     label=label
                 )
     
-    plt.title("Concept Direction Norm Comparison")
-    plt.xlabel("Layer Depth (%)")
-    plt.ylabel("L2 Norm of Concept Vector")
+    # plt.title("Concept Direction Norm Comparison")
+    plt.xlabel("Layer Depth (%)", fontweight='bold')
+    plt.ylabel("L2 Norm", fontweight='bold')
     
-    # Create custom legends
-    # 1. Legend for Concepts (Colors)
+    # Create combined custom legend
     from matplotlib.lines import Line2D
-    concept_handles = [Line2D([0], [0], color=concept_colors[c], lw=2, label=c) for c in concepts]
-    first_legend = plt.legend(handles=concept_handles, title="Concepts", loc='upper left', bbox_to_anchor=(1.05, 1))
-    plt.gca().add_artist(first_legend)
     
-    # 2. Legend for Models (Markers)
-    model_handles = [Line2D([0], [0], color='gray', marker=markers.get(m, 'o'), linestyle='None', markersize=8, label=m) for m in models]
-    plt.legend(handles=model_handles, title="Models", loc='upper left', bbox_to_anchor=(1.05, 0.7))
+    # Concept handles (Colors)
+    # Add a title/header manually if needed or just list them. 
+    # Let's just list them clearly.
+    custom_handles = []
+    
+    # Add header for Concepts
+    # custom_handles.append(Line2D([0], [0], color='w', label=r'$\bf{Concepts:}$'))
+    for c in sorted(concepts):
+        display_c = concept_renames.get(c, c)
+        custom_handles.append(Line2D([0], [0], color=concept_colors[c], lw=3, label=display_c))
+    
+    # Add spacing or header for Models
+    # custom_handles.append(Line2D([0], [0], color='w', label=r'$\bf{Models:}$'))
+    for m in models:
+        custom_handles.append(Line2D([0], [0], color='gray', marker=markers.get(m, 'o'), linestyle='None', markersize=10, label=m))
+    
+    leg = plt.legend(
+        handles=custom_handles,
+        loc='lower right',
+        frameon=True,
+        framealpha=0.9,
+    )
+    plt.setp(leg.get_texts(), fontweight='bold')
 
     plt.grid(True, linestyle='--', alpha=0.7)
     plt.yscale('log')   

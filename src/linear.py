@@ -327,18 +327,32 @@ def main():
                     
                     # Score
                     # explained_variance_ratio is tensor
-                    mean_score = ipca.explained_variance_ratio[0].item()
+                    ratios = ipca.explained_variance_ratio
+                    mean_score = ratios[0].item()
+                    
+                    # Calculate number of components for 95% variance
+                    cumsum = torch.cumsum(ratios, dim=0)
+                    # Find first index where sum >= 0.95 (indices are 0-based, so +1)
+                    # We use 0.95 - 1e-6 to handle float precision issues where it might be slightly under
+                    n_95_indices = (cumsum >= 0.95).nonzero(as_tuple=True)[0]
+                    if len(n_95_indices) > 0:
+                        n_components_95 = n_95_indices[0].item() + 1
+                    else:
+                        n_components_95 = len(ratios)
+
                     std_score = 0.0 # Undefined for global PCA
                     
                     results[layer_idx] = {
                         "mean_score": mean_score,
                         "std_score": std_score,
+                        "n_components_95": n_components_95,
                         "alphas": alphas
                     }
                     logger.info(f"Linearity for {concept_category_name} in {model_name} at layer {layer_idx}: {mean_score:.4f}")
                 
                 # Save results
-                save_path = f"assets/linear/{model_name}/linearity_{concept_category_name}_{vector_type}.pt"
+                suffix = "_remove" if args.remove_concept_vector else ""
+                save_path = f"assets/linear/{model_name}/linearity_{concept_category_name}_{vector_type}{suffix}.pt"
                 torch.save(
                     {
                         "model": model_full_name,

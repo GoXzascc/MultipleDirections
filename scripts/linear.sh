@@ -5,7 +5,7 @@ set -euo pipefail
 models=("google/gemma-2-2b" "Qwen/Qwen3-1.7B")
 
 # Layers: 10 evenly spaced layers from 0-100
-LAYERS="10,20,30,40,50,60,70,80,90,100"
+LAYERS="0, 10,20,30,40,50,60,70,80,90,100"
 
 # Run analysis
 for model in "${models[@]}"; do
