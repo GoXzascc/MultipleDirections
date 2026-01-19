@@ -5,10 +5,10 @@ import numpy as np
 
 MODEL_LAYERS = {
     # "EleutherAI/pythia-70m": 6,
-    "EleutherAI/pythia-160m": 12,
-    # "google/gemma-2-2b": 26,
+    # "EleutherAI/pythia-160m": 12,
+    "google/gemma-2-2b": 26,
     # # "google/gemma-2-9b": 42,
-    # "Qwen/Qwen3-1.7B": 28,
+    "Qwen/Qwen3-1.7B": 28,
     # "Qwen/Qwen3-14B": 40,
 }
 

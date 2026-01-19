@@ -34,10 +34,10 @@ echo ""
 # Array of scripts to run
 SCRIPTS=(
     "src/extract_concepts.py"
-    "src/curvature.py"
-    "src/direction_alignment.py"
-    "src/trajectory_smoothness.py"
-    "src/norm_decomposition.py"
+    # "src/curvature.py"
+    # "src/direction_alignment.py"
+    # "src/trajectory_smoothness.py"
+    # "src/norm_decomposition.py"
 )
 
 # Run each script

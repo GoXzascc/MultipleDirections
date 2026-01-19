@@ -1,4 +1,5 @@
 import argparse
+import json
 import torch
 import transformer_lens
 import datasets
@@ -209,6 +210,16 @@ class DifferenceInMeans:
         positive_concept_vector /= positive_token_length
         negative_concept_vector /= negative_token_length
         concept_diff = positive_concept_vector - negative_concept_vector
+        norm = concept_diff.norm(dim=1)
+        logger.info(f"Concept diff norm: {norm}")
+        
+        # Save norm to json
+        if is_save:
+            norm_save_path = save_path.replace(".pt", "_norm.json")
+            with open(norm_save_path, "w") as f:
+                json.dump(norm.tolist(), f)
+
+        
         concept_diff = torch.nn.functional.normalize(concept_diff, dim=1)
 
         os.makedirs(os.path.dirname(save_path), exist_ok=True)
