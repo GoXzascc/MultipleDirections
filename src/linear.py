@@ -76,13 +76,18 @@ def main():
     # Trajectory sweep parameters
     parser.add_argument("--alpha_min", type=float, default=1e-3)
     parser.add_argument("--alpha_max", type=float, default=1e7)
-    parser.add_argument("--alpha_points", type=int, default=20) # Fewer points than smoothness
+    parser.add_argument("--alpha_points", type=int, default=200) # Fewer points than smoothness
     
     parser.add_argument(
         "--layers",
         type=str,
-        default="25,50,75",
+        default="50",
         help="Comma-separated percentages or layer indices.",
+    )
+    parser.add_argument(
+        "--remove_concept_vector",
+        action="store_true",
+        help="Remove concept vector from hidden states",
     )
     args = parser.parse_args()
 
@@ -183,19 +188,117 @@ def main():
                     else:
                         steering_vector = random_vector
                     
-                    # Sweep alphas and collect trajectories
-                    outputs = [] # List of [batch*seq, d]
+                    # Run alpha=0 first to get baseline
+                    h_ref = run_model_with_steering(
+                        model=model,
+                        input_ids=input_ids,
+                        steering_vector=steering_vector,
+                        layer_idx=layer_idx,
+                        alpha_value=0.0,
+                        device=device
+                    )
+                    # Flatten [Batch, Seq, D] -> [Batch*Seq, D]
+                    h_ref_flat = hidden_to_flat(h_ref, target_dtype=torch.float32)
+                    
+                    # Custom GPU Incremental PCA
+                    class IncrementalPCA_GPU:
+                        def __init__(self, device, hidden_dim):
+                            self.device = device
+                            self.n_samples = 0
+                            self.mean = torch.zeros(hidden_dim, device=device, dtype=torch.float32)
+                            # We maintain the scatter matrix (sum of squares), not covariance, to be numerically stable with updates
+                            self.scatter_matrix = torch.zeros((hidden_dim, hidden_dim), device=device, dtype=torch.float32)
+
+                        def partial_fit(self, batch):
+                            # batch: [m, d]
+                            m = batch.shape[0]
+                            if m == 0:
+                                return
+                            
+                            batch = batch.to(self.device, dtype=torch.float32)
+                            batch_mean = batch.mean(dim=0)
+                            
+                            # Update scatter matrix based on batch
+                            # S_batch = \sum (x - mu_batch)(x - mu_batch)^T
+                            batch_centered = batch - batch_mean
+                            batch_scatter = batch_centered.T @ batch_centered
+                            
+                            # Combine with existing stats
+                            # S_new = S_old + S_batch + \frac{n * m}{n + m} (mu_old - mu_batch)(mu_old - mu_batch)^T
+                            if self.n_samples > 0:
+                                n = self.n_samples
+                                delta_mean = self.mean - batch_mean
+                                mean_correction = (n * m / (n + m)) * torch.outer(delta_mean, delta_mean)
+                                
+                                self.scatter_matrix += batch_scatter + mean_correction
+                                self.mean = (n * self.mean + m * batch_mean) / (n + m)
+                            else:
+                                self.scatter_matrix = batch_scatter
+                                self.mean = batch_mean
+                                
+                            self.n_samples += m
+
+                        @property
+                        def explained_variance_ratio(self):
+                            if self.n_samples < 2:
+                                return torch.tensor([1.0], device=self.device) # Only 1 point, effectively linear? Or undefined. Return 1.0.
+                                
+                            # Covariance = Scatter / (n - 1)
+                            cov = self.scatter_matrix / (self.n_samples - 1)
+                            
+                            # Check for NaNs or Infs
+                            if torch.isnan(cov).any() or torch.isinf(cov).any():
+                                return torch.tensor([0.0], device=self.device)
+
+                            # Eigen decomposition
+                            # Use eigh for symmetric matrices (faster and more stable)
+                            try:
+                                eigenvalues = torch.linalg.eigvalsh(cov)
+                                # Sort descending (eigvalsh returns ascending)
+                                eigenvalues = eigenvalues.flip(dims=(0,))
+                                
+                                total_var = eigenvalues.sum()
+                                if total_var == 0:
+                                    return torch.tensor([1.0], device=self.device)
+                                    
+                                return eigenvalues / total_var
+                            except RuntimeError:
+                                return torch.tensor([0.0], device=self.device)
+
+                    # Initialize GPU PCA
+                    ipca = IncrementalPCA_GPU(device, concept_vectors.shape[1])
                     
                     # Create alphas range
+                    # We can skip 0.0 in the loop since we have it as baseline (delta=0)
                     alphas = torch.logspace(
                          float(torch.log10(torch.tensor(args.alpha_min))),
                          float(torch.log10(torch.tensor(args.alpha_max))),
                          steps=args.alpha_points
                     ).tolist()
                     
-                    # Ensure 0.0 is included
+                    # Ensure we fit at least the baseline (origin of deltas)
+                    # For PCA of deltas, the origin (0 vector) IS a data point (t=0).
+                    # h(0) - h_ref = 0.
+                    # We should include this point.
+                    # partial_fit expects [batch, d].
+                    # We can craft a zero batch.
+                    # Actually, let's just add 0.0 to alphas if we want to seamlessly process it, 
+                    # but calculating h(0) again is redundant. 
+                    # We know delta at alpha=0 is 0.
+                    # So let's just feed a zero vector of size [N_prompts, d] to PCA.
+                    
+                    # Feed zeros for alpha=0 case (baseline)
+                    # Shape is [batch_size (dataset size), hidden_dim]
+                    # We processed inputs in one go for dataset selection?
+                    # Wait, input_ids is [test_size, seq_len].
+                    # hidden_to_flat makes it [test_size * seq_len, d]
+                    # So we need to feed zeros of that shape.
                     if 0.0 not in alphas:
-                        alphas = [0.0] + alphas
+                        # Construct appropriate zero batch
+                        # We need to know shape. run_model... at alpha=0 gives us that.
+                        # h_ref_flat is [Batch*Seq, D].
+                        # Just feed zeros of this shape.
+                        ipca.partial_fit(torch.zeros_like(h_ref_flat))
                     
                     for alpha in alphas:
                         h = run_model_with_steering(
@@ -206,21 +309,33 @@ def main():
                             alpha_value=alpha,
                             device=device
                         )
-                        # h is [batch, seq, d]
-                        outputs.append(hidden_to_flat(h, target_dtype=torch.float32).cpu()) 
+                        
+                        h_flat = hidden_to_flat(h, target_dtype=torch.float32)
+                        
+                        # Calculate delta
+                        if args.remove_concept_vector:
+                             steering_vec_device = steering_vector.to(device=h.device, dtype=h.dtype)
+                             # Remove linear component from h first
+                             h_flat_corrected = hidden_to_flat(h - alpha * steering_vec_device, target_dtype=torch.float32)
+                             # Then subtract baseline (which is h(0) - 0*v = h(0))
+                             delta = h_flat_corrected - h_ref_flat
+                        else:
+                             delta = h_flat - h_ref_flat
+                        
+                        # Partial fit
+                        ipca.partial_fit(delta)
                     
-                    # Stack: [num_alphas, total_tokens, d]
-                    trajectory_data = torch.stack(outputs)
-                    
-                    # Compute Linearity
-                    mean_score, std_score = compute_linearity_score(trajectory_data)
+                    # Score
+                    # explained_variance_ratio is tensor
+                    mean_score = ipca.explained_variance_ratio[0].item()
+                    std_score = 0.0 # Undefined for global PCA
                     
                     results[layer_idx] = {
                         "mean_score": mean_score,
                         "std_score": std_score,
                         "alphas": alphas
                     }
-                    logger.info(f"Linearity for {concept_category_name} in {model_name} at layer {layer_idx}: {mean_score:.4f} +/- {std_score:.4f}")
+                    logger.info(f"Linearity for {concept_category_name} in {model_name} at layer {layer_idx}: {mean_score:.4f}")
                 
                 # Save results
                 save_path = f"assets/linear/{model_name}/linearity_{concept_category_name}_{vector_type}.pt"
